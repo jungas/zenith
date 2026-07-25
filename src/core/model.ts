@@ -5,6 +5,21 @@
  * exported and diffed trivially.
  */
 
+declare global {
+  interface Window {
+    /**
+     * Set by the single-file build. When true the app is one embedded HTML
+     * document: there is no service worker to register, and the host owns the
+     * light/dark switch.
+     */
+    __ZENITH_EMBEDDED__?: boolean;
+  }
+}
+
+/** True when running as the single-file build rather than the full PWA. */
+export const isEmbedded = (): boolean =>
+  typeof window !== 'undefined' && window.__ZENITH_EMBEDDED__ === true;
+
 /** Integer cents. Floats never touch a balance — see `core/money.ts`. */
 export type Cents = number;
 /** A calendar date, 'YYYY-MM-DD'. */

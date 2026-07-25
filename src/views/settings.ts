@@ -14,6 +14,7 @@ import {
   clearAll, getState, moneyOpts, replaceState, updateSettings, commit,
 } from '../store.ts';
 import { installState, promptInstall } from '../pwa.ts';
+import { isEmbedded } from '../core/model.ts';
 import type { Cents, MoneyOptions, ThemePreference } from '../core/model.ts';
 
 const CURRENCIES = ['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'NZD', 'JPY', 'CHF', 'SEK', 'NOK', 'DKK', 'PLN', 'ZAR', 'INR', 'SGD', 'BRL', 'MXN'];
@@ -110,7 +111,18 @@ export function settingsView(): HTMLElement {
       'section.card.block',
       null,
       h('h3.card-title', { text: 'Install' }),
-      install.installed
+      isEmbedded()
+        ? h(
+            'div',
+            null,
+            h('p.card-text', {
+              text: 'This is the single-file preview of Zenith. It works fully, and your budget is saved in this browser, but it cannot be installed or run offline — both need the service worker that only the full app ships with.',
+            }),
+            h('p.muted-note', null, icon('info', { size: 15 }), h('span', {
+              text: 'Export a backup here and import it into the full app to carry your budget across.',
+            })),
+          )
+        : install.installed
         ? h('p.card-text', null, statusPill('good', 'Installed', { size: 'sm' }), h('span', { text: 'Zenith is running as an installed app.' }))
         : h(
             'div',

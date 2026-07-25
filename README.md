@@ -14,6 +14,7 @@ npm test          # type-checks, then runs 47 tests
 npm run typecheck # types only
 npm run build     # dist/*.js + sw.js
 npm run icons     # regenerate the app icons
+npm run build:artifact   # the whole app as one HTML file
 ```
 
 Open Settings → **Load sample data** for a worked example: four months of
@@ -265,6 +266,32 @@ which is what the name means — on an indigo-to-blue plate, echoing the end-dot
 the app's own line charts draw. Two shapes it deliberately is not: bars on a flat
 blue square (that is LinkedIn's silhouette), and a dot centred above a symmetric
 peak (which reads as a person).
+
+## Single-file build
+
+`npm run build:artifact` packs the whole app into one self-contained
+`dist-artifact/zenith.html` — no external requests of any kind. Useful for
+sharing the app as a single page.
+
+Collapsing 26 modules into one document needs a bundler, because concatenating
+the ES modules into one scope would collide on every same-named local (`render`,
+`state`, `money`, …). Rather than hand-writing a transpiler, `tsc` emits
+CommonJS and `tools/build-artifact.ts` wraps each module in its own function,
+registered by path and required lazily — about twenty lines of registry.
+
+Two things the single file necessarily gives up:
+
+- **Offline caching.** A service worker has to be a separate same-origin script
+  at the scope it controls, and it cannot be registered from a `data:` or
+  `blob:` URL.
+- **Installability.** That needs the worker plus a linked manifest.
+
+Everything else works, including localStorage persistence. The app detects this
+mode via `window.__ZENITH_EMBEDDED__`, which makes it skip worker registration,
+leave the host page's light/dark stamp alone rather than fighting it, and say so
+in Settings instead of offering an install that cannot work. The page opens with
+the sample budget seeded through the store, so it still fills with content even
+where a host sandboxes storage.
 
 ## Deploying
 

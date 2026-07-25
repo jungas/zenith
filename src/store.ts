@@ -54,16 +54,42 @@ function migrate(parsed: Partial<AppState>): AppState {
   return ensurePaymentCategories(next);
 }
 
+/**
+ * Is browser storage usable at all? A sandboxed frame can deny it outright,
+ * which is a different problem from a full disk and deserves a different
+ * message.
+ */
+function storageWorks(): boolean {
+  try {
+    const probe = '__zenith_probe__';
+    globalThis.localStorage.setItem(probe, '1');
+    globalThis.localStorage.removeItem(probe);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+let warnedAboutStorage = false;
+
 /** Writes are debounced — a slider drag shouldn't hit disk 60 times a second. */
 function persist(): void {
   if (persistTimer) clearTimeout(persistTimer);
   persistTimer = setTimeout(() => {
     persistTimer = null;
     try {
-      globalThis.localStorage?.setItem(STORAGE_KEY, JSON.stringify(state));
+      globalThis.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     } catch (error) {
-      console.error('Saving failed — device storage may be full.', error);
-      notifyError('Could not save. Your device storage may be full.');
+      // Report once. Repeating it on every keystroke would bury the app in
+      // toasts for a condition the user cannot fix mid-session.
+      if (warnedAboutStorage) return;
+      warnedAboutStorage = true;
+      console.error('Saving failed.', error);
+      notifyError(
+        storageWorks()
+          ? 'Could not save. Your device storage may be full.'
+          : 'This browser is blocking storage here, so changes will be lost when you close the page.',
+      );
     }
   }, 120);
 }

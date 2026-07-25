@@ -10,6 +10,7 @@ import { defineRoutes, startRouter, getRoute } from './router.ts';
 import type { ActiveRoute, RouteDefinition } from './router.ts';
 import { initPwa, onPwaChange, installState, promptInstall } from './pwa.ts';
 import type { IconName } from './ui/icons.ts';
+import { isEmbedded } from './core/model.ts';
 import type { ThemePreference } from './core/model.ts';
 
 import { dashboardView } from './views/dashboard.ts';
@@ -237,7 +238,9 @@ function errorView(error: unknown): HTMLElement {
 function applyTheme(preference: ThemePreference): void {
   const root = document.documentElement;
   if (preference === 'light' || preference === 'dark') root.dataset.theme = preference;
-  else delete root.dataset.theme;
+  // Embedded, "match device" means matching the host page: clearing the
+  // attribute here would undo the viewer's own theme toggle.
+  else if (!isEmbedded()) delete root.dataset.theme;
 
   const meta = qs('meta[name="theme-color"]');
   if (meta) {

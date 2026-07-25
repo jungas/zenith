@@ -4,6 +4,7 @@
  */
 
 import { toast } from './ui/toast.ts';
+import { isEmbedded } from './core/model.ts';
 
 /** The install prompt event, which is not in the standard DOM lib. */
 interface BeforeInstallPromptEvent extends Event {
@@ -86,6 +87,8 @@ export function initPwa(): void {
   if (!('serviceWorker' in navigator)) return;
   // file:// has no origin a worker can be scoped to; skip rather than throw.
   if (window.location.protocol === 'file:') return;
+  // The single-file build has no separate worker script to point at.
+  if (isEmbedded()) return;
 
   window.addEventListener('load', () => {
     void (async () => {
