@@ -77,7 +77,3 @@ export function formatPercent(ratio, digits = 0) {
   if (!Number.isFinite(ratio)) return '—';
   return `${(ratio * 100).toFixed(digits)}%`;
 }
-
-export const sum = (values) => values.reduce((total, n) => total + (n || 0), 0);
-
-export const clampPositive = (cents) => (cents > 0 ? cents : 0);

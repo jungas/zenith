@@ -3,7 +3,7 @@
 import { h } from './dom.js';
 import { icon } from './icons.js';
 import { sparkline } from './charts.js';
-import { formatMoney, formatMoneyCompact, formatPercent } from '../core/money.js';
+import { formatMoney, formatMoneyCompact } from '../core/money.js';
 
 /**
  * Stat tile: label · value · optional delta · optional 12-point trend.
@@ -163,9 +163,4 @@ export function button(label, { onClick, variant = '', iconName, type = 'button'
     iconName ? icon(iconName, { size: 16 }) : null,
     h('span', { text: label }),
   );
-}
-
-/** Utilisation / coverage readout used on card tiles. */
-export function ratioCaption(ratio) {
-  return ratio == null ? 'No limit set' : formatPercent(ratio, ratio < 0.1 ? 1 : 0);
 }

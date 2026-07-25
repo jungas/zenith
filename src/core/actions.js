@@ -7,7 +7,7 @@ import {
   ensurePaymentCategories, isCredit, makeAccount, makeCategory, makeTransaction,
   newId, paymentCategoryFor,
 } from './model.js';
-import { monthOf, todayISO } from './dates.js';
+import { todayISO } from './dates.js';
 
 /* ── Accounts ─────────────────────────────────────────────────────────── */
 
@@ -263,5 +263,3 @@ export function toCsv(state) {
   }
   return rows.map((row) => row.join(',')).join('\n');
 }
-
-export const monthOfTransaction = (tx) => monthOf(tx.date);

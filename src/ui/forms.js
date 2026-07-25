@@ -717,5 +717,3 @@ export function openFundCardForm(cardId, { month }) {
     ],
   });
 }
-
-export { button };

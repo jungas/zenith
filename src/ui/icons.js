@@ -64,5 +64,3 @@ export function icon(name, opts = {}) {
   );
   return svg;
 }
-
-export const iconNames = Object.keys(PATHS);

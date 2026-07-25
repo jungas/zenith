@@ -25,12 +25,6 @@ export const ACCOUNT_TYPES = /** @type {const} */ ({
 export const isCredit = (account) => account?.type === 'credit';
 export const isAsset = (account) => ACCOUNT_TYPES[account?.type]?.asset === true;
 
-/** Transaction kinds. `transfer` legs always come in linked pairs. */
-export const TX_KINDS = /** @type {const} */ (['expense', 'income', 'transfer', 'adjustment']);
-
-/** Category kinds. `ccPayment` categories are owned by a credit account. */
-export const CATEGORY_KINDS = /** @type {const} */ (['spending', 'ccPayment']);
-
 /**
  * Eight categorical slots, in the fixed order validated for colour-vision
  * deficiency (see README § Colour). Colour follows the entity, never its rank:
@@ -166,10 +160,6 @@ export function ensurePaymentCategories(state) {
     );
   }
   return next;
-}
-
-export function accountsById(state) {
-  return new Map(state.accounts.map((a) => [a.id, a]));
 }
 
 export function categoriesById(state) {

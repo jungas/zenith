@@ -82,8 +82,6 @@ export function mount(node, ...children) {
   return node;
 }
 
-export const frag = (...children) => append(document.createDocumentFragment(), children);
-
 /** `qs('.foo')` scoped to document or a root. */
 export const qs = (selector, root = document) => root.querySelector(selector);
 export const qsa = (selector, root = document) => [...root.querySelectorAll(selector)];

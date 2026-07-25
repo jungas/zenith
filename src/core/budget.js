@@ -31,7 +31,7 @@
 import {
   addMonths, compareMonths, currentMonth, monthOf, monthRange, todayISO,
 } from './dates.js';
-import { isCredit } from './model.js';
+import { isAsset, isCredit } from './model.js';
 
 /**
  * User transactions plus a synthesised opening-balance entry per account, so
@@ -89,7 +89,7 @@ export function cashOnHand(state, throughISO = null) {
   const balances = accountBalances(state, throughISO);
   let total = 0;
   for (const account of state.accounts) {
-    if (!isCredit(account)) total += balances.get(account.id) || 0;
+    if (isAsset(account)) total += balances.get(account.id) || 0;
   }
   return total;
 }
