@@ -3,13 +3,17 @@
 An installable, offline-first **envelope budgeting** PWA where **credit cards are
 part of the budget** rather than a separate ledger you reconcile by hand.
 
-Zero dependencies — no framework, no bundler, no build step. It is HTML, CSS and
-ES modules, served as-is.
+Written in **TypeScript** under `strict`, with **no runtime dependencies** — no
+framework, no bundler, no chart library. TypeScript is the only build-time
+dependency.
 
 ```bash
-npm start     # http://localhost:4173
-npm test      # 46 tests, node:test, no dependencies
-npm run icons # regenerate the PNG app icons
+npm install
+npm start         # builds, then serves http://localhost:4173
+npm test          # type-checks, then runs 47 tests
+npm run typecheck # types only
+npm run build     # dist/*.js + sw.js
+npm run icons     # regenerate the app icons
 ```
 
 Open Settings → **Load sample data** for a worked example: four months of
@@ -59,7 +63,7 @@ backed by real money sitting in a real account.
 The one thing with no reserve behind it is debt that **predates** the budget. It
 moves a card's balance without ever having been income, so it drops out of the
 identity and surfaces instead as *uncovered* — the first thing the app nudges you
-to fund. (`tests/budget.test.mjs` pins all of this, including the pre-existing
+to fund. (`tests/budget.test.ts` pins all of this, including the pre-existing
 debt case that a naïve version of the identity gets wrong.)
 
 ---
@@ -101,37 +105,89 @@ full keyboard navigation, and a focus-trapped dialog.
 ## Architecture
 
 ```
-index.html            app shell
+index.html            app shell (loads dist/app.js)
 manifest.webmanifest  installability
-sw.js                 precached shell, network-first navigations, SWR assets
 styles/               tokens · base · components · views
 src/
-  app.js              chrome, nav, theme, render loop
-  router.js           hash routing (works from file:// too)
-  store.js            single state object, localStorage, pub/sub, undo stack
-  pwa.js              SW registration, install & update prompts, online state
+  app.ts              chrome, nav, theme, render loop
+  router.ts           hash routing (works from file:// too)
+  store.ts            single state object, localStorage, pub/sub, undo stack
+  pwa.ts              SW registration, install & update prompts, online state
+  sw.ts               service worker → compiled to ./sw.js at the repo root
   core/               pure domain logic — no DOM, no storage
-    money.js          integer cents in, formatted strings out
-    dates.js          'YYYY-MM-DD' / 'YYYY-MM' calendar maths
-    model.js          shapes, constructors, payment-envelope invariant
-    budget.js         the engine: rollover, activity, reserves, reconcile
-    cards.js          balances, cycles, minimums, coverage, payoff
-    actions.js        state transitions (pure: state → state)
-    seed.js           deterministic sample data
+    model.ts          the type layer: Account union, state, constructors
+    money.ts          integer cents in, formatted strings out
+    dates.ts          'YYYY-MM-DD' / 'YYYY-MM' calendar maths
+    budget.ts         the engine: rollover, activity, reserves, reconcile
+    cards.ts          balances, cycles, minimums, coverage, payoff
+    actions.ts        state transitions (pure: state → state)
+    seed.ts           deterministic sample data
   ui/                 dom · icons · charts · components · modal · toast · forms
   views/              one module per screen
-tools/                zero-dep static server · PNG icon generator
+tools/                static dev server · PNG icon generator
 tests/                node:test — engine, cards, charts, PWA wiring
+dist/                 build output (git-ignored)
 ```
 
 **`core/` is pure and DOM-free**, which is why the money maths is directly
 testable under plain `node --test` with no browser or test framework.
 
+## TypeScript setup
+
+Sources import each other with **`.ts` extensions**, which makes one source tree
+serve both runtimes:
+
+- **Node runs the sources directly.** Node 22 strips types, so `npm test` and the
+  tools need no build at all — `node --test "tests/**/*.test.ts"`.
+- **The browser gets compiled output.** `rewriteRelativeImportExtensions` turns
+  those `.ts` specifiers into `.js` on emit, so `dist/` is plain ES modules.
+
+Three configs, because the three targets have genuinely different libs:
+
+| Config | Purpose |
+|---|---|
+| `tsconfig.json` | the app → `dist/`, DOM lib |
+| `tsconfig.sw.json` | the service worker → `./sw.js`, WebWorker lib |
+| `tsconfig.check.json` | type-checks app + tests + tools, emits nothing |
+
+The worker compiles to the **repo root** rather than `dist/` on purpose: a
+worker's default scope is its own directory, so serving it from `dist/` would
+leave it unable to control the root page without an extra HTTP header.
+
+`strict` is on, plus `noUnusedLocals`, `noImplicitReturns` and
+`erasableSyntaxOnly` — the last of which keeps the sources runnable by Node's
+type stripping by rejecting syntax that needs real codegen (enums, namespaces,
+parameter properties).
+
+### What the types are actually worth here
+
+`Account` is a **discriminated union**, so a credit card's terms cannot be read
+off a chequing account without narrowing through `isCredit` first:
+
+```ts
+export type Account = AssetAccount | CreditAccount;
+export const isCredit = (a: Account | null | undefined): a is CreditAccount =>
+  a?.type === 'credit';
+```
+
+Converting to TypeScript surfaced three real bugs that the JavaScript version
+shipped with:
+
+1. **`#/cards/<chequing-id>` rendered a card** with blank APR, limit and dates,
+   because the detail view trusted any account it found by id. It now shows
+   "card not found".
+2. **`upcomingPayments(asOf)` ignored its own date argument** when computing
+   days-until-due — it never threaded `asOf` through to the snapshots.
+3. **`updateAccount` could produce an invalid account** by spreading a patch of
+   card terms onto a chequing account. It now re-runs the constructor, which
+   strips them.
+
 ### Design decisions worth knowing
 
-- **No dependencies, no build.** A budget you rely on should not stop working
-  because a toolchain rotted. The tradeoff is a hand-rolled ~80-line hyperscript
-  layer and hand-rolled SVG charts.
+- **No runtime dependencies.** A budget you rely on should not stop working
+  because a toolchain rotted, so nothing ships to the browser but this repo's own
+  code. The tradeoff is a hand-rolled hyperscript layer and hand-rolled SVG
+  charts. TypeScript is a build-time dependency only.
 - **Integer cents everywhere.** Floats never touch a balance; rate maths rounds
   back to cents immediately.
 - **localStorage, not IndexedDB.** The whole budget is a few hundred KB of JSON,
@@ -139,6 +195,9 @@ testable under plain `node --test` with no browser or test framework.
   `JSON.stringify`.
 - **`u` undo instead of confirmation dialogs** for reversible actions;
   confirmation is reserved for genuinely destructive ones.
+- **Test fixtures fail loudly.** Lookups go through a `must()` helper rather than
+  a `!` assertion, so a drifted fixture reports what went missing instead of
+  throwing a TypeError inside an assertion.
 - **Transfers are always a linked pair.** Deleting an account deletes both legs —
   a half-transfer would silently unbalance every total in the app.
 - **Text always goes through `textContent`.** A payee named `<img onerror=…>` is
@@ -192,6 +251,31 @@ are both respected; hit targets are ≥40px and the primary actions sit within
 thumb reach on a phone.
 
 ---
+
+## Icons
+
+`npm run icons` generates every app icon from `tools/gen-icons.ts` — a ~40-line
+PNG writer over Node's built-in `zlib`, so even the icon pipeline has no
+dependencies. Shapes are 4× supersampled for smooth edges, and the maskable
+variants keep the artwork inside the middle 80% so a circular crop cannot clip
+it.
+
+The mark is a **rising line ending in a marker at its high point** — a zenith,
+which is what the name means — on an indigo-to-blue plate, echoing the end-dot
+the app's own line charts draw. Two shapes it deliberately is not: bars on a flat
+blue square (that is LinkedIn's silhouette), and a dot centred above a symmetric
+peak (which reads as a person).
+
+## Deploying
+
+The app is static once built:
+
+```bash
+npm ci && npm run build   # emits dist/ and sw.js
+```
+
+Then serve the repository root. Everything is relative, so it works from a
+subdirectory. `sw.js` must sit at the served root to control the whole scope.
 
 ## Browser support
 

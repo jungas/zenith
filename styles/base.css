@@ -136,8 +136,9 @@ svg {
   width: 1.75rem;
   height: 1.75rem;
   border-radius: var(--radius-sm);
-  background: var(--accent);
-  color: var(--accent-ink);
+  /* Same indigo-to-blue plate as the app icon. */
+  background: linear-gradient(160deg, var(--series-7), var(--accent));
+  color: #fff;
 }
 
 .brand-name {
