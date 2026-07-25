@@ -1,0 +1,208 @@
+/**
+ * Design tokens.
+ *
+ * The categorical series slots are a fixed, validated order — worst adjacent
+ * CVD ΔE 9.1 light / 8.4 dark, worst adjacent normal-vision ΔE 19.6 / 19.3.
+ * Dark is a *selected* set of steps for the dark surface, not an automatic flip.
+ * Three light slots (aqua, yellow, magenta) sit below 3:1 against the light
+ * surface, so every chart that uses them ships direct value labels and a table
+ * view as relief. See README § Colour.
+ *
+ * Status colours are reserved for state and never reused as a series; each one
+ * ships with an icon and a word so meaning never rides on hue alone.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* Surfaces & ink */
+  --surface-1: #fcfcfb;
+  --surface-2: #ffffff;
+  --page: #f9f9f7;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #898781;
+  --grid-line: #e1e0d9;
+  --axis-line: #c3c2b7;
+  --border: rgba(11, 11, 11, 0.1);
+  --border-strong: rgba(11, 11, 11, 0.16);
+  --wash: rgba(11, 11, 11, 0.04);
+  --wash-strong: rgba(11, 11, 11, 0.07);
+
+  /* Categorical series — fixed order, never cycled */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --series-7: #4a3aa7;
+  --series-8: #e34948;
+  --series-neutral: #898781;
+
+  /* Sequential blue ramp (used by meters and washes) */
+  --blue-100: #cde2fb;
+  --blue-200: #9ec5f4;
+  --blue-300: #6da7ec;
+  --blue-450: #2a78d6;
+  --blue-550: #1c5cab;
+  --blue-650: #104281;
+
+  /* Status — fixed, never themed */
+  --status-good: #0ca30c;
+  --status-warning: #fab219;
+  --status-serious: #ec835a;
+  --status-critical: #d03b3b;
+  --success-text: #006300;
+  --danger-text: #b3211f;
+
+  /* Meter tracks: a lighter step of the fill's own ramp */
+  --track-accent: #cde2fb;
+  --track-good: #c6ecc6;
+  --track-warning: #fdeac2;
+  --track-serious: #f9ded2;
+  --track-critical: #f4cfcf;
+  --track-neutral: #e1e0d9;
+
+  --spark-line: #b8b7b0;
+
+  /* Accent (interactive) */
+  --accent: #2a78d6;
+  --accent-hover: #1c5cab;
+  --accent-ink: #ffffff;
+  --accent-wash: rgba(42, 120, 214, 0.1);
+  --focus-ring: #2a78d6;
+
+  /* Type */
+  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --fs-xs: 0.6875rem;
+  --fs-sm: 0.8125rem;
+  --fs-base: 0.9375rem;
+  --fs-md: 1.0625rem;
+  --fs-lg: 1.375rem;
+  --fs-xl: 1.75rem;
+  --fs-hero: 3rem;
+
+  /* Space & shape */
+  --sp-1: 0.25rem;
+  --sp-2: 0.5rem;
+  --sp-3: 0.75rem;
+  --sp-4: 1rem;
+  --sp-5: 1.5rem;
+  --sp-6: 2rem;
+  --sp-7: 3rem;
+  --radius-sm: 8px;
+  --radius: 12px;
+  --radius-lg: 18px;
+  --radius-pill: 999px;
+
+  --shadow-sm: 0 1px 2px rgba(11, 11, 11, 0.05);
+  --shadow: 0 2px 8px rgba(11, 11, 11, 0.07);
+  --shadow-lg: 0 12px 32px rgba(11, 11, 11, 0.14);
+
+  --header-h: 3.5rem;
+  --nav-h: 4rem;
+  --content-max: 62rem;
+}
+
+/* Dark: same hues, steps chosen for the dark surface and validated as a set. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+
+    --surface-1: #1a1a19;
+    --surface-2: #212120;
+    --page: #0d0d0d;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #898781;
+    --grid-line: #2c2c2a;
+    --axis-line: #383835;
+    --border: rgba(255, 255, 255, 0.1);
+    --border-strong: rgba(255, 255, 255, 0.18);
+    --wash: rgba(255, 255, 255, 0.045);
+    --wash-strong: rgba(255, 255, 255, 0.08);
+
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --series-5: #d55181;
+    --series-6: #008300;
+    --series-7: #9085e9;
+    --series-8: #e66767;
+    --series-neutral: #898781;
+
+    --success-text: #0ca30c;
+    --danger-text: #e66767;
+
+    --track-accent: #12365f;
+    --track-good: #144014;
+    --track-warning: #4a3a10;
+    --track-serious: #4a2e20;
+    --track-critical: #4a1f1f;
+    --track-neutral: #2c2c2a;
+
+    --spark-line: #5c5b56;
+
+    --accent: #3987e5;
+    --accent-hover: #6da7ec;
+    --accent-ink: #0d0d0d;
+    --accent-wash: rgba(57, 135, 229, 0.16);
+    --focus-ring: #6da7ec;
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+    --shadow-lg: 0 14px 36px rgba(0, 0, 0, 0.6);
+  }
+}
+
+/* The explicit toggle must win in both directions. */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --surface-1: #1a1a19;
+  --surface-2: #212120;
+  --page: #0d0d0d;
+  --text-primary: #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted: #898781;
+  --grid-line: #2c2c2a;
+  --axis-line: #383835;
+  --border: rgba(255, 255, 255, 0.1);
+  --border-strong: rgba(255, 255, 255, 0.18);
+  --wash: rgba(255, 255, 255, 0.045);
+  --wash-strong: rgba(255, 255, 255, 0.08);
+
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
+  --series-6: #008300;
+  --series-7: #9085e9;
+  --series-8: #e66767;
+  --series-neutral: #898781;
+
+  --success-text: #0ca30c;
+  --danger-text: #e66767;
+
+  --track-accent: #12365f;
+  --track-good: #144014;
+  --track-warning: #4a3a10;
+  --track-serious: #4a2e20;
+  --track-critical: #4a1f1f;
+  --track-neutral: #2c2c2a;
+
+  --spark-line: #5c5b56;
+
+  --accent: #3987e5;
+  --accent-hover: #6da7ec;
+  --accent-ink: #0d0d0d;
+  --accent-wash: rgba(57, 135, 229, 0.16);
+  --focus-ring: #6da7ec;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 14px 36px rgba(0, 0, 0, 0.6);
+}
