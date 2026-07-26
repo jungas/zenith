@@ -109,11 +109,18 @@ export function accountsView(): HTMLElement {
                   null,
                   h('span.account-name', { text: account.name }),
                   h('span.account-meta', {
-                    text: isCredit(account)
-                      ? `${formatMoney(Math.max(0, account.creditLimit + balance), { ...money, cents: false })} available of ${formatMoney(account.creditLimit, { ...money, cents: false })}`
-                      : account.provider
-                        ? `${meta.label} · ${account.provider}`
-                        : meta.label,
+                    // Who runs the account leads: it is what you look for when
+                    // two cards or two wallets sit side by side. The type is
+                    // already the group heading above, so it only fills in when
+                    // there is no issuer or provider to name.
+                    text: [
+                      account.provider || (isCredit(account) ? null : meta.label),
+                      isCredit(account)
+                        ? `${formatMoney(Math.max(0, account.creditLimit + balance), { ...money, cents: false })} available of ${formatMoney(account.creditLimit, { ...money, cents: false })}`
+                        : null,
+                    ]
+                      .filter(Boolean)
+                      .join(' · '),
                   }),
                 ),
                 h(

@@ -95,12 +95,12 @@ export function seedState(
     openedOn: `${firstMonth}-01`, sort: 3,
   });
   const visa = makeAccount({
-    name: 'Sapphire Visa', type: 'credit', openingBalance: 0,
+    name: 'BPI Rewards Visa', type: 'credit', provider: 'BPI', openingBalance: 0,
     openedOn: `${firstMonth}-01`, creditLimit: 800000, apr: 0.2199,
     statementDay: 18, dueDay: 12, minPaymentRate: 0.02, minPaymentFloor: 3500, sort: 3,
   });
   const mastercard = makeAccount({
-    name: 'Aurora Mastercard', type: 'credit',
+    name: 'BDO Gold Mastercard', type: 'credit', provider: 'BDO',
     // Debt that predates the budget: nothing was ever set aside for it, so it
     // shows up as uncovered and is the app's first "pay this down" nudge.
     openingBalance: -124000,

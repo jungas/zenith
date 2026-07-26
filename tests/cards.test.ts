@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { emptyState } from '../src/core/model.ts';
+import { CARD_ISSUERS, emptyState } from '../src/core/model.ts';
 import type { AppState, CreditAccount } from '../src/core/model.ts';
 import * as actions from '../src/core/actions.ts';
 import { account, category, creditAccount } from './helpers.ts';
@@ -223,6 +223,25 @@ test('portfolio totals add up across cards', () => {
   assert.equal(summary.reserved, 100_000, 'the new charge is reserved');
   assert.equal(summary.uncovered, 50_000, 'the inherited debt is not');
   assert.equal(summary.utilization, 0.3);
+});
+
+test('a card keeps its issuing bank, and the suggestions cover the Philippines', () => {
+  let { state } = withCard({ provider: 'BPI' });
+  assert.equal(creditAccount(state, 'Visa').provider, 'BPI');
+
+  // Editing the terms must not quietly drop the issuer.
+  const visa = creditAccount(state, 'Visa');
+  state = actions.updateAccount(state, visa.id, { creditLimit: 900_000 });
+  assert.equal(creditAccount(state, 'Visa').provider, 'BPI');
+
+  // The suggestion list is only useful if the banks people actually hold cards
+  // with are in it; anything unlisted can still be typed.
+  const philippine: string[] = CARD_ISSUERS
+    .filter((issuer) => issuer.region === 'Philippines')
+    .map((issuer) => issuer.name);
+  for (const bank of ['BDO', 'BPI', 'Metrobank', 'Security Bank', 'UnionBank', 'RCBC', 'PNB']) {
+    assert.ok(philippine.includes(bank), `${bank} should be offered as an issuer`);
+  }
 });
 
 test('the sample data is internally consistent', () => {

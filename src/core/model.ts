@@ -64,6 +64,34 @@ export const WALLET_PROVIDERS = [
   'Apple Pay', 'Google Pay', 'Alipay', 'WeChat Pay', 'Venmo', 'Cash App',
 ] as const;
 
+/**
+ * Card issuers, offered as suggestions rather than a closed list — the region
+ * rides along so "Metrobank" and "HSBC" are told apart in the picker. Philippine
+ * banks come first because that is the market this app is used in; anything not
+ * listed can still be typed.
+ */
+export const CARD_ISSUERS = [
+  { name: 'BDO', region: 'Philippines' },
+  { name: 'BPI', region: 'Philippines' },
+  { name: 'Metrobank', region: 'Philippines' },
+  { name: 'Security Bank', region: 'Philippines' },
+  { name: 'UnionBank', region: 'Philippines' },
+  { name: 'RCBC', region: 'Philippines' },
+  { name: 'PNB', region: 'Philippines' },
+  { name: 'EastWest Bank', region: 'Philippines' },
+  { name: 'China Bank', region: 'Philippines' },
+  { name: 'AUB', region: 'Philippines' },
+  { name: 'Landbank', region: 'Philippines' },
+  { name: 'HSBC Philippines', region: 'Philippines' },
+  { name: 'American Express', region: 'International' },
+  { name: 'Capital One', region: 'International' },
+  { name: 'Chase', region: 'International' },
+  { name: 'Citi', region: 'International' },
+  { name: 'Discover', region: 'International' },
+  { name: 'HSBC', region: 'International' },
+  { name: 'Standard Chartered', region: 'International' },
+] as const satisfies ReadonlyArray<{ name: string; region: string }>;
+
 interface AccountBase {
   id: string;
   name: string;
@@ -73,7 +101,7 @@ interface AccountBase {
   note: string;
   archived: boolean;
   sort: number;
-  /** Who runs the account — mainly for wallets, e.g. 'GCash'. */
+  /** Who runs the account: a wallet's provider ('GCash') or a card's issuing bank ('BPI'). */
   provider?: string;
 }
 

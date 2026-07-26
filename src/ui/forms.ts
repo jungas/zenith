@@ -9,7 +9,8 @@ import { icon } from './icons.ts';
 import { parseMoney, centsToInput, formatMoney } from '../core/money.ts';
 import { todayISO } from '../core/dates.ts';
 import {
-  ACCOUNT_TYPES, CATEGORY_COLORS, isCredit, isWallet, paymentCategoryFor, WALLET_PROVIDERS,
+  ACCOUNT_TYPES, CARD_ISSUERS, CATEGORY_COLORS, isCredit, isWallet, paymentCategoryFor,
+  WALLET_PROVIDERS,
 } from '../core/model.ts';
 import type {
   Account, AccountType, Category, Cents, ISODate, MonthKey, SeriesColor, Transaction, TxKind,
@@ -461,10 +462,13 @@ export function openAccountForm({ account = null, presetType }: AccountFormOptio
   const render = (): void => {
     const credit = type === 'credit';
     const wallet = type === 'wallet';
+    // One field, two vocabularies: a wallet has a provider, a card has an
+    // issuing bank. They are the same fact — who runs the account — so they
+    // share `provider` rather than growing a second nearly-identical column.
     const providerInput = input({
       value: existing?.provider ?? '',
-      placeholder: 'GCash',
-      list: 'wallet-providers',
+      placeholder: credit ? 'BPI' : 'GCash',
+      list: credit ? 'card-issuers' : 'wallet-providers',
       autocomplete: 'off',
     });
     const openingInput = moneyInput({
@@ -512,14 +516,22 @@ export function openAccountForm({ account = null, presetType }: AccountFormOptio
         { id: 'acct-type', hint: editing ? 'Type cannot change after creation.' : undefined },
       ),
       field('Name', nameInput, { id: 'acct-name' }),
-      wallet
+      wallet || credit
         ? h(
             'div',
             null,
-            h('datalist#wallet-providers', null, WALLET_PROVIDERS.map((n) => h('option', { value: n }))),
-            field('Provider', providerInput, {
+            credit
+              ? h(
+                  'datalist#card-issuers',
+                  null,
+                  CARD_ISSUERS.map((issuer) => h('option', { value: issuer.name, label: issuer.region })),
+                )
+              : h('datalist#wallet-providers', null, WALLET_PROVIDERS.map((n) => h('option', { value: n }))),
+            field(credit ? 'Issuing bank' : 'Provider', providerInput, {
               id: 'acct-provider',
-              hint: 'Who runs the wallet. Shown beside the account so two wallets never look alike.',
+              hint: credit
+                ? 'The bank behind the card. Philippine issuers are listed first; anything else can be typed.'
+                : 'Who runs the wallet. Shown beside the account so two wallets never look alike.',
             }),
           )
         : null,
@@ -574,7 +586,7 @@ export function openAccountForm({ account = null, presetType }: AccountFormOptio
         name,
         type,
         openingBalance: credit ? -openingRaw : openingRaw,
-        ...(wallet ? { provider: providerInput.value.trim() } : {}),
+        ...(wallet || credit ? { provider: providerInput.value.trim() } : {}),
       };
       if (credit) {
         Object.assign(patch, {

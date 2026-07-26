@@ -10,7 +10,7 @@ dependency.
 ```bash
 npm install
 npm start         # builds, then serves http://localhost:4173
-npm test          # type-checks, then runs 58 tests
+npm test          # type-checks, then runs 59 tests
 npm run typecheck # types only
 npm run build     # dist/*.js + sw.js
 npm run icons     # regenerate the app icons
@@ -18,7 +18,7 @@ npm run build:artifact   # the whole app as one HTML file
 ```
 
 Open Settings → **Load sample data** for a worked example: four months of
-budgeting across two credit cards and a digital wallet.
+budgeting across two Philippine credit cards and a digital wallet.
 
 ---
 
@@ -100,6 +100,14 @@ full keyboard navigation, and a focus-trapped dialog.
   each with an icon and a word, so state never rides on colour alone.
 - **Cash advances** — paying *from* a card draws on its own credit, so nothing is
   categorised and the debt simply grows.
+- **Issuing bank** — a card names the bank behind it, shown on the card, in the
+  accounts list and on the card detail page, so two Visas are never confused.
+  The suggestions lead with Philippine issuers (BDO, BPI, Metrobank, Security
+  Bank, UnionBank, RCBC, PNB, EastWest, China Bank, AUB, Landbank, HSBC
+  Philippines) followed by international ones, and the field is a suggestion
+  list rather than a closed set — any issuer can be typed. It is the same
+  `provider` field a wallet uses: one fact, "who runs this account", rather than
+  two nearly identical columns.
 
 ### Digital wallets
 
