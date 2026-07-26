@@ -301,8 +301,27 @@ The app is static once built:
 npm ci && npm run build   # emits dist/ and sw.js
 ```
 
-Then serve the repository root. Everything is relative, so it works from a
-subdirectory. `sw.js` must sit at the served root to control the whole scope.
+Then serve `index.html`, `manifest.webmanifest`, `sw.js`, `dist/`, `styles/` and
+`assets/`. Every reference is relative, so a project subpath
+(`you.github.io/zenith/`) works with no configuration: the worker scopes itself
+to that directory rather than the domain root. `sw.js` has to sit beside
+`index.html` — a worker only controls its own directory and below.
+
+`.github/workflows/deploy.yml` does exactly this on push. It needs one manual
+step: repository **Settings → Pages → Source: GitHub Actions**.
+
+### Why the single-file build is not a substitute
+
+The single-file build is for *sharing* the app, not installing it. A PWA needs
+two things a lone HTML file cannot have:
+
+- a **service worker** — which must be a separate same-origin script, and cannot
+  be registered from a `data:` or `blob:` URL
+- a **linked manifest** — which browsers only honour for a top-level document,
+  not one embedded in a cross-origin frame
+
+Add-to-Home-Screen on such a page gives a bookmark, not an installed app, and it
+still needs the network to open. Host the built app for the real thing.
 
 ## Browser support
 
