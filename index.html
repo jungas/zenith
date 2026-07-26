@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Zenith · Budget &amp; cards</title>
+    <meta
+      name="description"
+      content="Offline-first envelope budgeting with credit card management wired straight into the budget."
+    />
+    <meta name="theme-color" content="#f9f9f7" />
+    <meta name="color-scheme" content="light dark" />
+
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" href="./assets/icons/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./assets/icons/icon-192.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Zenith" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="mobile-web-app-capable" content="yes" />
+
+    <link rel="stylesheet" href="./styles/tokens.css" />
+    <link rel="stylesheet" href="./styles/base.css" />
+    <link rel="stylesheet" href="./styles/components.css" />
+    <link rel="stylesheet" href="./styles/views.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <div id="app" class="app">
+      <div class="boot">
+        <p class="boot-text">Loading Zenith…</p>
+      </div>
+    </div>
+
+    <noscript>
+      <p style="padding: 2rem; text-align: center">
+        Zenith needs JavaScript — all of its budgeting runs locally in your browser.
+      </p>
+    </noscript>
+
+    <script type="module">
+      import { start } from './dist/app.js';
+      start();
+    </script>
+  </body>
+</html>

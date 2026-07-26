@@ -1,0 +1,33 @@
+{
+  "name": "zenith",
+  "version": "1.0.0",
+  "description": "Zenith \u2014 an offline-first PWA for envelope budgeting with credit-card management wired into the budget.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.sw.json",
+    "start": "npm run build && node tools/serve.ts",
+    "dev": "node tools/serve.ts",
+    "typecheck": "tsc -p tsconfig.check.json",
+    "test": "npm run typecheck && node --test \"tests/**/*.test.ts\"",
+    "test:only": "node --test \"tests/**/*.test.ts\"",
+    "icons": "node tools/gen-icons.ts",
+    "clean": "node -e \"for (const p of ['dist','dist-artifact','.artifact-build','sw.js']) require('node:fs').rmSync(p,{recursive:true,force:true})\"",
+    "build:artifact": "node tools/build-artifact.ts"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "pwa",
+    "budget",
+    "envelope-budgeting",
+    "credit-cards",
+    "offline-first"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "typescript": "^6.0.3"
+  }
+}

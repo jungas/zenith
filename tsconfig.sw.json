@@ -1,0 +1,11 @@
+{
+  "//": "The service worker compiles to ./sw.js at the repo root, not into dist/. A worker's default scope is its own directory, so serving it from dist/ would leave it unable to control the root page without an extra HTTP header.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "WebWorker"],
+    "outDir": ".",
+    "sourceMap": false
+  },
+  "include": [],
+  "files": ["src/sw.ts"]
+}

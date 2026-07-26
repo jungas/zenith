@@ -1,0 +1,10 @@
+node_modules/
+.DS_Store
+*.log
+.cache/
+
+# Build output: `npm run build` regenerates both.
+dist/
+dist-artifact/
+.artifact-build/
+/sw.js

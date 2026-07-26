@@ -1,0 +1,10 @@
+{
+  "//": "Single-file build: emits CommonJS so tools/build-artifact.ts can wrap each module in a tiny registry and concatenate the app into one HTML file. Concatenating ES modules into one scope would collide on every same-named local (`render`, `state`, `money`, …).",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "verbatimModuleSyntax": false,
+    "outDir": ".artifact-build",
+    "sourceMap": false
+  }
+}

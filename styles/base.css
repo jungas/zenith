@@ -1,0 +1,340 @@
+/* Reset, layout shell and typography. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--fs-base);
+  line-height: 1.5;
+  color: var(--text-primary);
+  background: var(--page);
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+  /* Room for the fixed bottom nav plus the iOS home indicator. */
+  padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px));
+}
+
+h1,
+h2,
+h3,
+h4,
+p,
+figure,
+dl,
+dd {
+  margin: 0;
+}
+
+ul,
+ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+img,
+svg {
+  max-width: 100%;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+::selection {
+  background: var(--accent-wash);
+}
+
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 100;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--surface-1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+}
+
+.skip-link:focus {
+  left: var(--sp-3);
+  top: var(--sp-3);
+}
+
+/* ── Shell ──────────────────────────────────────────────────────────── */
+
+.app {
+  min-height: 100vh;
+}
+
+.boot {
+  display: grid;
+  place-items: center;
+  min-height: 60vh;
+}
+
+.boot-text {
+  color: var(--text-muted);
+}
+
+.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  height: var(--header-h);
+  padding: 0 var(--sp-4);
+  padding-top: env(safe-area-inset-top, 0px);
+  background: color-mix(in srgb, var(--page) 88%, transparent);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  color: var(--text-primary);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.brand:hover {
+  text-decoration: none;
+}
+
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: var(--radius-sm);
+  /* Same indigo-to-blue plate as the app icon. */
+  background: linear-gradient(160deg, var(--series-7), var(--accent));
+  color: #fff;
+}
+
+.brand-name {
+  font-size: var(--fs-md);
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  margin-left: auto;
+}
+
+.app-main {
+  max-width: var(--content-max);
+  margin: 0 auto;
+  padding: var(--sp-5) var(--sp-4) var(--sp-6);
+}
+
+.app-main:focus {
+  outline: none;
+}
+
+/* Bottom navigation — thumb-reachable on a phone, a rail on a wide screen. */
+.app-nav {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 25;
+  display: flex;
+  align-items: stretch;
+  justify-content: space-around;
+  height: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px));
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  background: color-mix(in srgb, var(--surface-1) 94%, transparent);
+  backdrop-filter: blur(12px);
+  border-top: 1px solid var(--border);
+}
+
+.nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  padding: var(--sp-1);
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  font-weight: 550;
+}
+
+.nav-item:hover {
+  color: var(--text-secondary);
+  text-decoration: none;
+}
+
+.nav-item.is-active {
+  color: var(--accent);
+}
+
+.nav-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-fab {
+  position: absolute;
+  right: var(--sp-4);
+  bottom: calc(100% + var(--sp-3));
+  display: grid;
+  place-items: center;
+  width: 3.25rem;
+  height: 3.25rem;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--accent-ink);
+  box-shadow: var(--shadow-lg);
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+
+.nav-fab:hover {
+  transform: scale(1.05);
+}
+
+.nav-fab:active {
+  transform: scale(0.97);
+}
+
+@media (min-width: 60rem) {
+  body {
+    padding-bottom: 0;
+    padding-left: 13rem;
+  }
+
+  .app-header {
+    padding-left: calc(13rem + var(--sp-4));
+  }
+
+  .app-nav {
+    top: 0;
+    right: auto;
+    bottom: 0;
+    width: 13rem;
+    height: 100vh;
+    flex-direction: column;
+    justify-content: flex-start;
+    gap: var(--sp-1);
+    padding: calc(var(--header-h) + var(--sp-4)) var(--sp-3) var(--sp-4);
+    border-top: none;
+    border-right: 1px solid var(--border);
+    background: var(--surface-1);
+  }
+
+  .nav-item {
+    flex: 0 0 auto;
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: var(--sp-3);
+    padding: var(--sp-2) var(--sp-3);
+    border-radius: var(--radius-sm);
+    font-size: var(--fs-base);
+  }
+
+  .nav-item.is-active {
+    background: var(--accent-wash);
+  }
+
+  .nav-fab {
+    position: static;
+    width: auto;
+    height: auto;
+    margin-top: auto;
+    padding: var(--sp-3);
+    border-radius: var(--radius);
+  }
+}
+
+/* ── Typography helpers ─────────────────────────────────────────────── */
+
+.muted {
+  color: var(--text-muted);
+}
+
+.muted-note {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}
+
+.money {
+  font-variant-numeric: tabular-nums;
+}
+
+.money.is-negative {
+  color: var(--danger-text);
+}
+
+.money.is-positive {
+  color: var(--success-text);
+}
+
+.money.is-zero {
+  color: var(--text-muted);
+}
+
+.icon {
+  flex: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@media print {
+  .app-nav,
+  .app-header,
+  .nav-fab,
+  .toast-region {
+    display: none !important;
+  }
+
+  body {
+    padding: 0;
+    background: #fff;
+  }
+}

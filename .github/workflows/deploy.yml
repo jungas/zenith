@@ -1,0 +1,72 @@
+name: Deploy to GitHub Pages
+
+# Publishes the real, installable PWA. Everything in the app is referenced
+# relatively, so serving it from a project subpath (user.github.io/zenith/)
+# works without configuration — the service worker scopes itself to that
+# directory rather than the domain root.
+#
+# One-time setup: repository Settings → Pages → Source: "GitHub Actions".
+#
+# Trunk only. Publishing from a feature branch would overwrite the live site
+# with unreviewed work; pull requests are validated by ci.yml instead.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Let a running deploy finish rather than cancelling it half-published.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      # Re-checked here as well as in CI: a red build must never reach Pages,
+      # even via a manual dispatch that skipped a pull request.
+      - run: npm test
+
+      - run: npm run build
+
+      - name: Assemble the site
+        run: |
+          mkdir -p _site
+          cp index.html manifest.webmanifest sw.js _site/
+          cp -r dist styles assets _site/
+
+      - name: Check the shell is complete
+        run: |
+          for file in index.html manifest.webmanifest sw.js dist/app.js \
+                      styles/tokens.css assets/icons/icon-512.png; do
+            test -f "_site/$file" || { echo "missing $file"; exit 1; }
+          done
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

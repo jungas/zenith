@@ -1,0 +1,13 @@
+{
+  "//": "Type-checks everything including tests and tools, which run under Node and so need its types. Emits nothing — `npm run build` does that.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node"],
+    "rootDir": ".",
+    "noEmit": true,
+    "sourceMap": false
+  },
+  "include": ["src/**/*.ts", "tests/**/*.ts", "tools/**/*.ts"],
+  "exclude": []
+}
