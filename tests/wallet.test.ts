@@ -1,0 +1,185 @@
+/**
+ * Digital wallets, and the transfer fees that come with them.
+ *
+ * The thing worth pinning here is that a fee is *spending*, not an adjustment:
+ * it has to leave the budget through a category, or the reconciliation identity
+ * silently stops holding.
+ */
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+
+import { emptyState, isAsset, isCredit, isWallet } from '../src/core/model.ts';
+import type { AppState } from '../src/core/model.ts';
+import * as actions from '../src/core/actions.ts';
+import {
+  accountBalance, cashOnHand, categoryRow, monthSummary, reconcile, spendingByCategory,
+} from '../src/core/budget.ts';
+import { formatMoney, parseMoney } from '../src/core/money.ts';
+import { account, category } from './helpers.ts';
+
+const JAN = '2026-01';
+
+function fixture() {
+  let state: AppState = emptyState(new Date('2026-01-01T00:00:00Z'));
+  state = actions.addAccount(state, {
+    name: 'Checking', type: 'checking', openingBalance: 500_000, openedOn: `${JAN}-01`,
+  });
+  state = actions.addAccount(state, {
+    name: 'GCash', type: 'wallet', provider: 'GCash', openingBalance: 20_000, openedOn: `${JAN}-01`,
+  });
+  state = actions.addCategory(state, { name: 'Groceries', group: 'Everyday' });
+  state = actions.addCategory(state, { name: 'Fees', group: 'Bills' });
+  return {
+    state,
+    checking: account(state, 'Checking'),
+    gcash: account(state, 'GCash'),
+    groceries: category(state, 'Groceries'),
+    fees: category(state, 'Fees'),
+  };
+}
+
+test('a wallet is an asset account, not a card', () => {
+  const { state, gcash } = fixture();
+  assert.equal(isWallet(gcash), true);
+  assert.equal(isAsset(gcash), true);
+  assert.equal(isCredit(gcash), false);
+  // No payment envelope: a wallet holds money, it does not create debt.
+  assert.equal(state.categories.filter((c) => c.kind === 'ccPayment').length, 0);
+});
+
+test('wallet money counts as cash you can budget', () => {
+  const { state } = fixture();
+  assert.equal(cashOnHand(state), 520_000, 'chequing plus wallet');
+  assert.equal(monthSummary(state, JAN).readyToAssign, 520_000);
+  assert.equal(reconcile(state, JAN).balanced, true);
+});
+
+test('the provider is kept, and stripped card terms cannot sneak in', () => {
+  const { gcash } = fixture();
+  assert.equal(gcash.provider, 'GCash');
+  assert.equal('creditLimit' in gcash, false);
+});
+
+test('spending from a wallet draws down its category, like cash', () => {
+  let { state, gcash, groceries } = fixture();
+  state = actions.setBudget(state, JAN, groceries.id, 30_000);
+  state = actions.addTransaction(state, {
+    date: `${JAN}-08`, accountId: gcash.id, categoryId: groceries.id,
+    payee: 'Sari-sari store', amount: -5_000, kind: 'expense',
+  });
+
+  const summary = monthSummary(state, JAN);
+  assert.equal(categoryRow(summary, groceries.id).available, 25_000);
+  assert.equal(accountBalance(state, gcash.id), 15_000);
+  assert.equal(summary.spending, 5_000);
+  assert.equal(reconcile(state, JAN).balanced, true);
+});
+
+test('topping up a wallet is not spending', () => {
+  let { state, checking, gcash } = fixture();
+  state = actions.addTransfer(state, {
+    fromAccountId: checking.id, toAccountId: gcash.id, amount: 100_000, date: `${JAN}-05`,
+  });
+
+  const summary = monthSummary(state, JAN);
+  assert.equal(accountBalance(state, checking.id), 400_000);
+  assert.equal(accountBalance(state, gcash.id), 120_000);
+  assert.equal(summary.spending, 0, 'moving your own money is not spending');
+  assert.equal(cashOnHand(state), 520_000, 'and it does not change how much you hold');
+  assert.equal(reconcile(state, JAN).balanced, true);
+});
+
+test('a cash-out fee is categorised spending, and the budget still reconciles', () => {
+  let { state, checking, gcash, fees } = fixture();
+  state = actions.setBudget(state, JAN, fees.id, 5_000);
+  state = actions.addTransfer(state, {
+    fromAccountId: gcash.id, toAccountId: checking.id, amount: 10_000,
+    date: `${JAN}-09`, fee: 200, feeCategoryId: fees.id,
+  });
+
+  // The wallet paid the amount moved *and* the fee.
+  assert.equal(accountBalance(state, gcash.id), 20_000 - 10_000 - 200);
+  assert.equal(accountBalance(state, checking.id), 510_000);
+  // Cash really did fall by the fee — that money is gone.
+  assert.equal(cashOnHand(state), 520_000 - 200);
+
+  const summary = monthSummary(state, JAN);
+  assert.equal(categoryRow(summary, fees.id).activity, -200);
+  assert.equal(categoryRow(summary, fees.id).available, 4_800);
+  assert.equal(summary.spending, 200, 'only the fee is spending');
+  assert.equal(spendingByCategory(state, JAN, JAN).get(fees.id), 200);
+  assert.equal(reconcile(state, JAN).balanced, true);
+});
+
+test('a fee with no category is refused rather than left uncategorised', () => {
+  let { state, checking, gcash } = fixture();
+  state = actions.addTransfer(state, {
+    fromAccountId: gcash.id, toAccountId: checking.id, amount: 10_000,
+    date: `${JAN}-09`, fee: 200, feeCategoryId: null,
+  });
+
+  assert.equal(state.transactions.length, 2, 'the transfer legs only');
+  // Better to drop the fee than to move money the budget cannot see.
+  assert.equal(cashOnHand(state), 520_000);
+  assert.equal(reconcile(state, JAN).balanced, true);
+});
+
+test('deleting a transfer takes its fee with it', () => {
+  let { state, checking, gcash, fees } = fixture();
+  state = actions.addTransfer(state, {
+    fromAccountId: gcash.id, toAccountId: checking.id, amount: 10_000,
+    date: `${JAN}-09`, fee: 200, feeCategoryId: fees.id,
+  });
+  assert.equal(state.transactions.length, 3);
+
+  const leg = state.transactions.find((t) => t.kind === 'transfer');
+  state = actions.deleteTransaction(state, leg!.id);
+
+  assert.equal(state.transactions.length, 0, 'no orphan fee left behind');
+  assert.equal(cashOnHand(state), 520_000);
+  assert.equal(reconcile(state, JAN).balanced, true);
+});
+
+test('editing a transfer amount leaves the fee alone', () => {
+  let { state, checking, gcash, fees } = fixture();
+  state = actions.addTransfer(state, {
+    fromAccountId: gcash.id, toAccountId: checking.id, amount: 10_000,
+    date: `${JAN}-09`, fee: 200, feeCategoryId: fees.id,
+  });
+
+  const outflow = state.transactions.find((t) => t.kind === 'transfer' && t.amount < 0);
+  state = actions.updateTransaction(state, outflow!.id, { amount: -30_000 });
+
+  const legs = state.transactions.filter((t) => t.kind === 'transfer');
+  assert.equal(legs.reduce((total, t) => total + t.amount, 0), 0, 'legs still mirror');
+  assert.equal(Math.abs(legs[0]!.amount), 30_000);
+
+  const fee = state.transactions.find((t) => t.kind === 'expense');
+  assert.equal(fee?.amount, -200, 'the fee kept its own amount');
+  assert.equal(reconcile(state, JAN).balanced, true);
+});
+
+test('a fee also rides along when the date changes', () => {
+  let { state, checking, gcash, fees } = fixture();
+  state = actions.addTransfer(state, {
+    fromAccountId: gcash.id, toAccountId: checking.id, amount: 10_000,
+    date: `${JAN}-09`, fee: 200, feeCategoryId: fees.id,
+  });
+
+  const outflow = state.transactions.find((t) => t.kind === 'transfer' && t.amount < 0);
+  state = actions.updateTransaction(state, outflow!.id, { date: `${JAN}-15` });
+
+  for (const tx of state.transactions) {
+    assert.equal(tx.date, `${JAN}-15`, `${tx.payee} should have moved with the transfer`);
+  }
+});
+
+test('pesos format and parse', () => {
+  const opts = { currency: 'PHP', locale: 'en-PH' };
+  assert.equal(formatMoney(123_456, opts), '₱1,234.56');
+  assert.equal(formatMoney(-5_000, opts), '-₱50.00');
+  assert.equal(formatMoney(123_456, { ...opts, cents: false }), '₱1,235');
+  // The symbol is stripped on the way back in.
+  assert.equal(parseMoney('₱1,234.56'), 123_456);
+});

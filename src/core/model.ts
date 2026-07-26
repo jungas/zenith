@@ -29,7 +29,7 @@ export type MonthKey = string;
 
 export const SCHEMA_VERSION = 1;
 
-export type AssetAccountType = 'checking' | 'savings' | 'cash';
+export type AssetAccountType = 'checking' | 'savings' | 'cash' | 'wallet';
 export type AccountType = AssetAccountType | 'credit';
 export type TxKind = 'expense' | 'income' | 'transfer' | 'adjustment';
 export type CategoryKind = 'spending' | 'ccPayment';
@@ -45,8 +45,24 @@ export const ACCOUNT_TYPES = {
   checking: { label: 'Checking', asset: true },
   savings: { label: 'Savings', asset: true },
   cash: { label: 'Cash', asset: true },
+  wallet: { label: 'Digital wallet', asset: true },
   credit: { label: 'Credit card', asset: false },
 } as const satisfies Record<AccountType, { label: string; asset: boolean }>;
+
+/**
+ * A digital wallet holds real money you can spend, so it is an asset account
+ * like cash — not a payment method layered over a card. What makes it worth its
+ * own type is the money movement around it: topping up from a bank and cashing
+ * out again, often for a fee (see `addTransfer`'s `fee`).
+ */
+export const isWallet = (account: Account | null | undefined): account is AssetAccount =>
+  account?.type === 'wallet';
+
+/** Common providers, offered as suggestions rather than a closed list. */
+export const WALLET_PROVIDERS = [
+  'GCash', 'Maya', 'GrabPay', 'ShopeePay', 'PayPal', 'Wise', 'Revolut',
+  'Apple Pay', 'Google Pay', 'Alipay', 'WeChat Pay', 'Venmo', 'Cash App',
+] as const;
 
 interface AccountBase {
   id: string;
@@ -57,6 +73,8 @@ interface AccountBase {
   note: string;
   archived: boolean;
   sort: number;
+  /** Who runs the account — mainly for wallets, e.g. 'GCash'. */
+  provider?: string;
 }
 
 export interface AssetAccount extends AccountBase {

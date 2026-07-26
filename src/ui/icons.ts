@@ -39,6 +39,9 @@ const PATHS = {
   // The brand mark: the same rising line as the app icon, minus the end dot,
   // which would go muddy at chrome sizes.
   zenith: 'M4 16.8 9.4 11.4 13.8 14.6 19.8 6.4',
+  // A phone with a balance line: a digital wallet, distinct from the physical
+  // wallet used for accounts in general.
+  phone: 'M7 3h10a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Zm2.5 5h5m-5 3.5h5M11 17.5h2',
 };
 
 export type IconName = keyof typeof PATHS;

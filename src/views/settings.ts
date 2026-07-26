@@ -17,12 +17,19 @@ import { installState, promptInstall } from '../pwa.ts';
 import { isEmbedded } from '../core/model.ts';
 import type { Cents, MoneyOptions, ThemePreference } from '../core/model.ts';
 
-const CURRENCIES = ['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'NZD', 'JPY', 'CHF', 'SEK', 'NOK', 'DKK', 'PLN', 'ZAR', 'INR', 'SGD', 'BRL', 'MXN'];
+// Alphabetical after the majors, so the list stays scannable as it grows.
+const CURRENCIES = [
+  'USD', 'EUR', 'GBP', 'AUD', 'BRL', 'CAD', 'CHF', 'CNY', 'DKK', 'HKD', 'IDR',
+  'INR', 'JPY', 'KRW', 'MXN', 'MYR', 'NOK', 'NZD', 'PHP', 'PLN', 'SEK', 'SGD',
+  'THB', 'TWD', 'VND', 'ZAR',
+];
 const LOCALES = [
   { value: 'en-US', label: 'English (US)' },
   { value: 'en-GB', label: 'English (UK)' },
   { value: 'en-AU', label: 'English (Australia)' },
   { value: 'en-CA', label: 'English (Canada)' },
+  { value: 'en-PH', label: 'English (Philippines)' },
+  { value: 'fil-PH', label: 'Filipino' },
   { value: 'de-DE', label: 'Deutsch' },
   { value: 'fr-FR', label: 'Français' },
   { value: 'es-ES', label: 'Español' },

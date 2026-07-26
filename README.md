@@ -10,7 +10,7 @@ dependency.
 ```bash
 npm install
 npm start         # builds, then serves http://localhost:4173
-npm test          # type-checks, then runs 47 tests
+npm test          # type-checks, then runs 58 tests
 npm run typecheck # types only
 npm run build     # dist/*.js + sw.js
 npm run icons     # regenerate the app icons
@@ -18,7 +18,7 @@ npm run build:artifact   # the whole app as one HTML file
 ```
 
 Open Settings → **Load sample data** for a worked example: four months of
-budgeting across two credit cards.
+budgeting across two credit cards and a digital wallet.
 
 ---
 
@@ -79,8 +79,8 @@ debt case that a naïve version of the identity gets wrong.)
 | **Card detail** | Statement-cycle timeline, a plain-language walkthrough of the budget connection, and a payoff planner (amortisation, total interest, months saved vs paying the minimum) |
 | **Ledger** | One searchable list across every account, filterable by account, category and month |
 | **Reports** | Income vs spending, spending by category, card debt over time, savings rate — 3/6/12-month ranges |
-| **Accounts** | Net worth, cash, debt, per-account balances |
-| **Settings** | Currency and locale, theme, utilisation warning threshold, install, JSON backup import/export, CSV export, sample data, integrity check |
+| **Accounts** | Net worth, cash, debt, per-account balances — chequing, savings, cash, digital wallets and cards |
+| **Settings** | Currency (26, including PHP) and locale, theme, utilisation warning threshold, install, JSON backup import/export, CSV export, sample data, integrity check |
 
 Also: one-level-deep **undo** on every mutation (`u`), `n` to add a transaction,
 full keyboard navigation, and a focus-trapped dialog.
@@ -100,6 +100,30 @@ full keyboard navigation, and a focus-trapped dialog.
   each with an icon and a word, so state never rides on colour alone.
 - **Cash advances** — paying *from* a card draws on its own credit, so nothing is
   categorised and the debt simply grows.
+
+### Digital wallets
+
+GCash, Maya, GrabPay, PayPal, Wise and the rest are **asset accounts**, not cards:
+a wallet holds your money, so it gets no payment envelope and no credit terms.
+The money in it is budgetable cash and counts towards `cashOnHand`, which means
+it takes part in the same reconciliation identity as chequing and savings.
+
+- **Provider** — a wallet carries a `provider` alongside its name (`GCash`,
+  `Wise`, …), shown beside the account type. The field offers the common
+  providers through a `datalist` but accepts anything.
+- **Top-ups are transfers, not spending.** Moving money from chequing into a
+  wallet changes where your cash sits and nothing else — no category is touched
+  and the total you hold is unchanged.
+- **Transfer fees are spending.** Cash-out and remittance fees are real money
+  leaving, so a transfer takes an optional fee *and a category for it*. The fee
+  is recorded as a third transaction — a categorised expense on the source
+  account — which is what keeps the identity holding: cash falls by the fee, and
+  the fee's envelope falls with it. A fee entered without a category is dropped
+  rather than moved somewhere the budget cannot see it, because the alternative
+  is an unexplained gap between your accounts and your envelopes.
+- **Editing and deleting** treat the fee as part of the transfer: deleting the
+  transfer takes the fee with it, a date change carries it along, and changing
+  the transferred amount leaves the fee's own amount alone.
 
 ---
 

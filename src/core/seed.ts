@@ -45,6 +45,7 @@ const CATEGORIES: CategorySpec[] = [
   { name: 'Internet',       group: 'Bills',     color: 'series-1', budget: 7900,   cadence: 1,  range: [7900, 7900],   cardBias: 1, fixed: true, day: 5 },
   { name: 'Insurance',      group: 'Bills',     color: 'series-8', budget: 21000,  cadence: 1,  range: [21000, 21000], cardBias: 0, fixed: true, day: 20 },
   { name: 'Subscriptions',  group: 'Lifestyle', color: 'series-5', budget: 4800,   cadence: 3,  range: [899, 1999],    cardBias: 1 },
+  { name: 'Fees',           group: 'Bills',     color: 'series-8', budget: 1500,   cadence: 0,  range: [0, 0],         cardBias: 0 },
   { name: 'Shopping',       group: 'Lifestyle', color: 'series-2', budget: 20000,  cadence: 3,  range: [2200, 14000],  cardBias: 0.95 },
   { name: 'Health & fitness', group: 'Lifestyle', color: 'series-3', budget: 9500, cadence: 2,  range: [1800, 6500],   cardBias: 0.6 },
   { name: 'Travel fund',    group: 'Goals',     color: 'series-4', budget: 25000,  cadence: 0,  range: [0, 0],         cardBias: 0 },
@@ -89,6 +90,10 @@ export function seedState(
     name: 'Cash', type: 'cash', openingBalance: 12000,
     openedOn: `${firstMonth}-01`, sort: 2,
   });
+  const ewallet = makeAccount({
+    name: 'GCash', type: 'wallet', provider: 'GCash', openingBalance: 45000,
+    openedOn: `${firstMonth}-01`, sort: 3,
+  });
   const visa = makeAccount({
     name: 'Sapphire Visa', type: 'credit', openingBalance: 0,
     openedOn: `${firstMonth}-01`, creditLimit: 800000, apr: 0.2199,
@@ -102,7 +107,7 @@ export function seedState(
     openedOn: `${firstMonth}-01`, creditLimit: 450000, apr: 0.2499,
     statementDay: 26, dueDay: 20, minPaymentRate: 0.025, minPaymentFloor: 2500, sort: 4,
   });
-  state.accounts = [checking, savings, wallet, visa, mastercard];
+  state.accounts = [checking, savings, wallet, ewallet, visa, mastercard];
 
   const categories = CATEGORIES.map((spec, index) =>
     makeCategory({ name: spec.name, group: spec.group, color: spec.color, sort: index }),
@@ -152,9 +157,15 @@ export function seedState(
         if (day > cutoff) continue;
         const useCard = random() < spec.cardBias;
         const cardAccount = random() < 0.65 ? visa : mastercard;
+        // Small, frequent things get paid from the wallet, the way they do in
+        // practice. Rent and insurance never do: a wallet holds pocket money,
+        // and routing a large fixed bill through it would overdraw an account
+        // that cannot go negative in real life.
+        const walletSized = spec.cadence >= 2 && !spec.fixed && spec.range[1] <= 20_000;
+        const cashAccount = !useCard && walletSized && random() < 0.4 ? ewallet.id : checking.id;
         transactions.push(makeTransaction({
           date: `${month}-${String(day).padStart(2, '0')}`,
-          accountId: useCard ? cardAccount.id : checking.id,
+          accountId: useCard ? cardAccount.id : cashAccount,
           categoryId: target.id,
           payee: pick(PAYEES[spec.name] ?? [spec.name]),
           amount: -between(spec.range),
@@ -162,6 +173,28 @@ export function seedState(
           cleared: true,
         }));
       }
+    }
+
+    // Monthly wallet top-up, with the provider's cash-in fee as real spending.
+    if (cutoff >= 6) {
+      const transferId = `xfer_wallet_${month}`;
+      transactions.push(
+        makeTransaction({
+          date: `${month}-06`, accountId: checking.id, categoryId: null,
+          payee: 'Top up GCash', amount: -60000,
+          kind: 'transfer', cleared: true, transferId,
+        }),
+        makeTransaction({
+          date: `${month}-06`, accountId: ewallet.id, categoryId: null,
+          payee: 'Top up from Everyday Checking', amount: 60000,
+          kind: 'transfer', cleared: true, transferId,
+        }),
+        makeTransaction({
+          date: `${month}-06`, accountId: checking.id, categoryId: category('Fees').id,
+          payee: 'GCash — fee', amount: -1500,
+          kind: 'expense', cleared: true, transferId,
+        }),
+      );
     }
 
     // Monthly transfer into savings.

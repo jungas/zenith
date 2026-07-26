@@ -95,7 +95,7 @@ export function dashboardView({ month = currentMonth() }: { month?: MonthKey } =
       statTile({
         label: 'Cash on hand',
         value: formatMoney(cash, { ...money, cents: false }),
-        hint: 'Across chequing, savings and cash',
+        hint: 'Across chequing, savings, cash and wallets',
         tone: 'neutral',
       }),
       statTile({

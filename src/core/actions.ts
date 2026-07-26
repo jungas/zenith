@@ -23,6 +23,15 @@ export interface TransferInput {
   payee?: string;
   memo?: string;
   cleared?: boolean;
+  /**
+   * A charge the sending account pays on top of the amount moved — a wallet
+   * cash-out fee, a wire fee. Recorded as ordinary categorised spending, not as
+   * an adjustment, because that is exactly what it is: money that left and is
+   * not coming back.
+   */
+  fee?: Cents;
+  /** Where the fee is budgeted. Required for the fee to be recorded. */
+  feeCategoryId?: string | null;
 }
 
 export interface PaymentInput {
@@ -172,11 +181,16 @@ export function updateTransaction(state: AppState, transactionId: string, patch:
   const existing = state.transactions.find((t) => t.id === transactionId);
   if (!existing) return state;
 
-  // Editing one leg of a transfer must keep the mirror leg in step.
-  if (existing.transferId && (patch.amount != null || patch.date)) {
+  // Editing one leg of a transfer must keep the mirror leg in step. Only the
+  // two transfer legs mirror each other: a fee attached to the same transferId
+  // is an expense in its own right and must keep its own amount.
+  if (existing.transferId && existing.kind === 'transfer' && (patch.amount != null || patch.date)) {
     const transactions = state.transactions.map((t) => {
       if (t.id === transactionId) return { ...t, ...patch };
       if (t.transferId !== existing.transferId) return t;
+      if (t.kind !== 'transfer') {
+        return patch.date ? { ...t, date: patch.date } : t;
+      }
       return {
         ...t,
         ...(patch.date ? { date: patch.date } : {}),
@@ -211,7 +225,9 @@ export function deleteTransaction(state: AppState, transactionId: string): AppSt
  */
 export function addTransfer(
   state: AppState,
-  { fromAccountId, toAccountId, amount, date, payee, memo, cleared }: TransferInput,
+  {
+    fromAccountId, toAccountId, amount, date, payee, memo, cleared, fee, feeCategoryId,
+  }: TransferInput,
 ): AppState {
   if (!fromAccountId || !toAccountId || fromAccountId === toAccountId || !amount) return state;
   const cents = Math.abs(Math.round(amount));
@@ -248,7 +264,29 @@ export function addTransfer(
     transferId,
   });
 
-  return { ...state, transactions: [...state.transactions, outflow, inflow] };
+  const legs: Transaction[] = [outflow, inflow];
+
+  // The fee shares the transferId so deleting the transfer takes it along, but
+  // it is an expense rather than a transfer leg — see `updateTransaction`, which
+  // mirrors amounts across legs and must not touch this row.
+  const feeAmount = Math.abs(Math.round(fee ?? 0));
+  if (feeAmount && feeCategoryId) {
+    legs.push(
+      makeTransaction({
+        date: when,
+        accountId: fromAccountId,
+        categoryId: feeCategoryId,
+        payee: `${to?.name ?? 'Transfer'} — fee`,
+        memo: memo || '',
+        amount: -feeAmount,
+        kind: 'expense',
+        cleared: cleared ?? false,
+        transferId,
+      }),
+    );
+  }
+
+  return { ...state, transactions: [...state.transactions, ...legs] };
 }
 
 /** Convenience wrapper used by the card views. */
