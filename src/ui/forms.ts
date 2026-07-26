@@ -8,7 +8,10 @@ import type { SelectGroup, SelectOption } from './components.ts';
 import { icon } from './icons.ts';
 import { parseMoney, centsToInput, formatMoney } from '../core/money.ts';
 import { todayISO } from '../core/dates.ts';
-import { ACCOUNT_TYPES, CATEGORY_COLORS, isCredit, paymentCategoryFor } from '../core/model.ts';
+import {
+  ACCOUNT_TYPES, CARD_ISSUERS, CATEGORY_COLORS, isCredit, isWallet, paymentCategoryFor,
+  WALLET_PROVIDERS,
+} from '../core/model.ts';
 import type {
   Account, AccountType, Category, Cents, ISODate, MonthKey, SeriesColor, Transaction, TxKind,
 } from '../core/model.ts';
@@ -137,6 +140,8 @@ export function openTransactionForm({
   const categorySelect = select(
     [{ value: '', label: 'Uncategorised' }, ...categoryOptions(state, { selected: transaction?.categoryId })],
   );
+  const feeInput = moneyInput({ placeholder: '0.00' });
+  const feeCategorySelect = select(categoryOptions(state));
   const payeeList = h(
     'datalist#payee-suggestions',
     null,
@@ -149,6 +154,23 @@ export function openTransactionForm({
   const renderHint = (): void => {
     const accountId = mode === 'transfer' ? toSelect.value : accountSelect.value;
     const account = state.accounts.find((a) => a.id === accountId);
+    if (isWallet(account)) {
+      mount(
+        hintSlot,
+        h(
+          'div.inline-note',
+          null,
+          icon('phone', { size: 16 }),
+          h('p', {
+            text:
+              mode === 'transfer'
+                ? `Topping up ${account.name} moves money between your own accounts, so it is not spending. If the provider charges for it, put that in the fee field — that part is spending.`
+                : `${account.name} holds real money, so spending from it draws down the category you pick, exactly like cash.`,
+          }),
+        ),
+      );
+      return;
+    }
     if (!isCredit(account)) {
       mount(hintSlot);
       return;
@@ -218,6 +240,19 @@ export function openTransactionForm({
               ? field('Category', categorySelect, { id: 'tx-category' })
               : h('div.field-spacer'),
           ),
+      // Cashing out of a wallet or wiring between banks usually costs something.
+      // The fee is spending, so it needs a category like any other outflow.
+      isTransfer && !editing
+        ? h(
+            'div.form-grid',
+            null,
+            field('Fee (optional)', feeInput, {
+              id: 'tx-fee',
+              hint: 'Charged to the sending account',
+            }),
+            field('Fee category', feeCategorySelect, { id: 'tx-fee-category' }),
+          )
+        : null,
       field(isTransfer ? 'Description' : 'Payee', payeeInput, { id: 'tx-payee' }),
       field('Memo', memoInput, { id: 'tx-memo' }),
       h('label.check-row', null, clearedInput, h('span', { text: 'Cleared — this has settled at the bank' })),
@@ -244,6 +279,8 @@ export function openTransactionForm({
               payee: payeeInput.value.trim(),
               memo: memoInput.value.trim(),
               cleared: clearedInput.checked,
+              fee: Math.abs(parseMoney(feeInput.value)),
+              feeCategoryId: feeCategorySelect.value || null,
             }),
           { label: 'transfer' },
         );
@@ -424,6 +461,16 @@ export function openAccountForm({ account = null, presetType }: AccountFormOptio
 
   const render = (): void => {
     const credit = type === 'credit';
+    const wallet = type === 'wallet';
+    // One field, two vocabularies: a wallet has a provider, a card has an
+    // issuing bank. They are the same fact — who runs the account — so they
+    // share `provider` rather than growing a second nearly-identical column.
+    const providerInput = input({
+      value: existing?.provider ?? '',
+      placeholder: credit ? 'BPI' : 'GCash',
+      list: credit ? 'card-issuers' : 'wallet-providers',
+      autocomplete: 'off',
+    });
     const openingInput = moneyInput({
       value: account ? centsToInput(account.openingBalance) : '',
       placeholder: '0.00',
@@ -469,6 +516,25 @@ export function openAccountForm({ account = null, presetType }: AccountFormOptio
         { id: 'acct-type', hint: editing ? 'Type cannot change after creation.' : undefined },
       ),
       field('Name', nameInput, { id: 'acct-name' }),
+      wallet || credit
+        ? h(
+            'div',
+            null,
+            credit
+              ? h(
+                  'datalist#card-issuers',
+                  null,
+                  CARD_ISSUERS.map((issuer) => h('option', { value: issuer.name, label: issuer.region })),
+                )
+              : h('datalist#wallet-providers', null, WALLET_PROVIDERS.map((n) => h('option', { value: n }))),
+            field(credit ? 'Issuing bank' : 'Provider', providerInput, {
+              id: 'acct-provider',
+              hint: credit
+                ? 'The bank behind the card. Philippine issuers are listed first; anything else can be typed.'
+                : 'Who runs the wallet. Shown beside the account so two wallets never look alike.',
+            }),
+          )
+        : null,
       field(credit ? 'Balance owed today' : 'Current balance', openingInput, {
         id: 'acct-opening',
         hint: credit
@@ -520,6 +586,7 @@ export function openAccountForm({ account = null, presetType }: AccountFormOptio
         name,
         type,
         openingBalance: credit ? -openingRaw : openingRaw,
+        ...(wallet || credit ? { provider: providerInput.value.trim() } : {}),
       };
       if (credit) {
         Object.assign(patch, {

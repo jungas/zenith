@@ -127,7 +127,14 @@ function fullCard(snap: CardSnapshot, money: Required<Pick<MoneyOptions, 'curren
             h('span', { text: card.name }),
           ),
           h('p.credit-card-terms', {
-            text: `${card.apr ? formatPercent(card.apr, 2) + ' APR' : 'APR not set'} · closes ${ordinal(card.statementDay)} · due ${ordinal(card.dueDay)}`,
+            text: [
+              card.provider,
+              card.apr ? `${formatPercent(card.apr, 2)} APR` : 'APR not set',
+              `closes ${ordinal(card.statementDay)}`,
+              `due ${ordinal(card.dueDay)}`,
+            ]
+              .filter(Boolean)
+              .join(' · '),
           }),
         ),
       ),
@@ -303,7 +310,14 @@ export function cardDetailView(
       ),
     ),
     sectionHeader(card.name, {
-      subtitle: `${card.apr ? formatPercent(card.apr, 2) + ' APR' : 'APR not set'} · limit ${formatMoney(card.creditLimit, { ...money, cents: false })} · statement closes ${ordinal(card.statementDay)}, due ${ordinal(card.dueDay)}`,
+      subtitle: [
+        card.provider,
+        card.apr ? `${formatPercent(card.apr, 2)} APR` : 'APR not set',
+        `limit ${formatMoney(card.creditLimit, { ...money, cents: false })}`,
+        `statement closes ${ordinal(card.statementDay)}, due ${ordinal(card.dueDay)}`,
+      ]
+        .filter(Boolean)
+        .join(' · '),
       actions: h(
         'button.btn.btn-primary',
         { type: 'button', onclick: () => openPaymentForm(card.id) },

@@ -10,6 +10,7 @@ import { ACCOUNT_TYPES, isCredit } from '../core/model.ts';
 import { getState, moneyOpts } from '../store.ts';
 import { navigate } from '../router.ts';
 import type { Account, AccountType, Cents } from '../core/model.ts';
+import { isWallet } from '../core/model.ts';
 
 export function accountsView(): HTMLElement {
   const state = getState();
@@ -98,22 +99,39 @@ export function accountsView(): HTMLElement {
                   onclick: () =>
                     credit ? navigate(`#/cards/${account.id}`) : navigate(`#/transactions?account=${account.id}`),
                 },
-                h('span.account-icon', null, icon(credit ? 'card' : 'wallet', { size: 17 })),
+                h(
+                  'span.account-icon',
+                  null,
+                  icon(credit ? 'card' : isWallet(account) ? 'phone' : 'wallet', { size: 17 }),
+                ),
                 h(
                   'span.account-body',
                   null,
                   h('span.account-name', { text: account.name }),
                   h('span.account-meta', {
-                    text: isCredit(account)
-                      ? `${formatMoney(Math.max(0, account.creditLimit + balance), { ...money, cents: false })} available of ${formatMoney(account.creditLimit, { ...money, cents: false })}`
-                      : meta.label,
+                    // Who runs the account leads: it is what you look for when
+                    // two cards or two wallets sit side by side. The type is
+                    // already the group heading above, so it only fills in when
+                    // there is no issuer or provider to name.
+                    text: [
+                      account.provider || (isCredit(account) ? null : meta.label),
+                      isCredit(account)
+                        ? `${formatMoney(Math.max(0, account.creditLimit + balance), { ...money, cents: false })} available of ${formatMoney(account.creditLimit, { ...money, cents: false })}`
+                        : null,
+                    ]
+                      .filter(Boolean)
+                      .join(' · '),
                   }),
                 ),
                 h(
                   'span.account-balance',
                   null,
+                  // An amount owed is shown in plain ink: it is neither a gain
+                  // nor a loss, and `moneyText` would paint it green for being a
+                  // positive number. (Passing 'is-negative' alongside its own
+                  // 'is-positive' just left both classes fighting in the cascade.)
                   credit
-                    ? moneyText(-balance, { money, className: balance < 0 ? 'is-negative' : '' })
+                    ? h('span.money', { text: formatMoney(-balance, money) })
                     : moneyText(balance, { money }),
                   credit && balance < 0 ? h('span.account-owed', { text: 'owed' }) : null,
                 ),

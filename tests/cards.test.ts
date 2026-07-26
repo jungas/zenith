@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { emptyState } from '../src/core/model.ts';
+import { CARD_ISSUERS, emptyState } from '../src/core/model.ts';
 import type { AppState, CreditAccount } from '../src/core/model.ts';
 import * as actions from '../src/core/actions.ts';
 import { account, category, creditAccount } from './helpers.ts';
@@ -11,7 +11,7 @@ import {
   cardBalance, cardSnapshot, debtSummary, minimumPayment, payoffComparison,
   payoffSchedule, statementCycle, upcomingPayments, utilizationBand,
 } from '../src/core/cards.ts';
-import { reconcile } from '../src/core/budget.ts';
+import { accountBalance, reconcile } from '../src/core/budget.ts';
 import { seedState } from '../src/core/seed.ts';
 import { nextDayOfMonth, daysBetween, addMonths, monthRange } from '../src/core/dates.ts';
 import { parseMoney, formatMoney, formatMoneyCompact } from '../src/core/money.ts';
@@ -225,6 +225,25 @@ test('portfolio totals add up across cards', () => {
   assert.equal(summary.utilization, 0.3);
 });
 
+test('a card keeps its issuing bank, and the suggestions cover the Philippines', () => {
+  let { state } = withCard({ provider: 'BPI' });
+  assert.equal(creditAccount(state, 'Visa').provider, 'BPI');
+
+  // Editing the terms must not quietly drop the issuer.
+  const visa = creditAccount(state, 'Visa');
+  state = actions.updateAccount(state, visa.id, { creditLimit: 900_000 });
+  assert.equal(creditAccount(state, 'Visa').provider, 'BPI');
+
+  // The suggestion list is only useful if the banks people actually hold cards
+  // with are in it; anything unlisted can still be typed.
+  const philippine: string[] = CARD_ISSUERS
+    .filter((issuer) => issuer.region === 'Philippines')
+    .map((issuer) => issuer.name);
+  for (const bank of ['BDO', 'BPI', 'Metrobank', 'Security Bank', 'UnionBank', 'RCBC', 'PNB']) {
+    assert.ok(philippine.includes(bank), `${bank} should be offered as an issuer`);
+  }
+});
+
 test('the sample data is internally consistent', () => {
   const state: AppState = seedState({ now: new Date('2026-07-25T12:00:00Z') });
   assert.ok(state.accounts.length >= 5);
@@ -238,13 +257,36 @@ test('the sample data is internally consistent', () => {
     assert.equal(envelopes.length, 1, `${account.name} should own one payment envelope`);
   }
 
-  // Transfers are always paired.
-  const byTransfer = new Map();
-  for (const tx of state.transactions.filter((t) => t.transferId)) {
-    byTransfer.set(tx.transferId, (byTransfer.get(tx.transferId) || 0) + tx.amount);
+  // The two legs of every transfer net to zero. A fee can share the transferId,
+  // but it is an expense in its own right and is not part of that pairing.
+  const byTransfer = new Map<string, number>();
+  for (const tx of state.transactions) {
+    if (!tx.transferId || tx.kind !== 'transfer') continue;
+    byTransfer.set(tx.transferId, (byTransfer.get(tx.transferId) ?? 0) + tx.amount);
   }
+  assert.ok(byTransfer.size > 0, 'the sample should contain transfers');
   for (const [id, net] of byTransfer) {
     assert.equal(net, 0, `transfer ${id} should net to zero`);
+  }
+
+  // Anything else sharing a transferId must be categorised spending, or it
+  // would move money without the budget accounting for it.
+  for (const tx of state.transactions) {
+    if (!tx.transferId || tx.kind === 'transfer') continue;
+    assert.equal(tx.kind, 'expense', `${tx.payee} rides a transfer but is not an expense`);
+    assert.ok(tx.categoryId, `${tx.payee} is a transfer fee with no category`);
+  }
+
+  // No asset account is ever overdrawn. Cash and wallets cannot go negative in
+  // real life, so sample data that does is a generation bug — this caught the
+  // wallet being handed a rent payment it could not cover.
+  for (const account of state.accounts.filter((a) => a.type !== 'credit')) {
+    for (const month of monthRange(addMonths('2026-07', -3), '2026-07')) {
+      const [y, m] = month.split('-').map(Number);
+      const lastDay = new Date(y!, m!, 0).getDate();
+      const balance = accountBalance(state, account.id, `${month}-${String(lastDay).padStart(2, '0')}`);
+      assert.ok(balance >= 0, `${account.name} is overdrawn at the end of ${month} (${balance})`);
+    }
   }
 
   // And the whole budget reconciles for every month it covers.
