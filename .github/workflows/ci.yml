@@ -1,0 +1,44 @@
+name: CI
+
+# Validates every pull request and every push to the trunk. Deployment is a
+# separate workflow so that publishing the live site is never a side effect of
+# opening a pull request.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      # Type-checks app, tests and tools, then runs the suite.
+      - name: Type-check and test
+        run: npm test
+
+      - name: Build the app
+        run: npm run build
+
+      - name: Build the single-file bundle
+        run: npm run build:artifact
+
+      # The bundle is only useful if it is genuinely self-contained, so fail on
+      # any absolute URL that is not the SVG namespace (never fetched).
+      - name: Check the bundle has no external references
+        run: |
+          if grep -oE 'https?://[^"'"'"' )]+' dist-artifact/zenith.html \
+             | grep -v '^http://www\.w3\.org/2000/svg$'; then
+            echo "::error::the single-file build references an external URL"
+            exit 1
+          fi
+          echo "no external references"

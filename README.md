@@ -307,8 +307,13 @@ Then serve `index.html`, `manifest.webmanifest`, `sw.js`, `dist/`, `styles/` and
 to that directory rather than the domain root. `sw.js` has to sit beside
 `index.html` — a worker only controls its own directory and below.
 
-`.github/workflows/deploy.yml` does exactly this on push. It needs one manual
-step: repository **Settings → Pages → Source: GitHub Actions**.
+Two workflows, kept separate so publishing the live site is never a side effect
+of opening a pull request:
+
+- `ci.yml` — type-checks, tests and builds every pull request and every push to
+  `main`, and fails if the single-file bundle picks up an external reference.
+- `deploy.yml` — publishes to Pages from `main` only. It needs one manual step:
+  repository **Settings → Pages → Source: GitHub Actions**.
 
 ### Why the single-file build is not a substitute
 
