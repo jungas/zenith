@@ -10,9 +10,9 @@ dependency.
 ```bash
 npm install
 npm start         # builds, then serves http://localhost:4173
-npm test          # type-checks, then runs 59 tests
+npm test          # type-checks, then runs 60 tests
 npm run typecheck # types only
-npm run build     # dist/*.js + sw.js
+npm run build     # dist/*.js + sw.js, stamped with a shell version
 npm run icons     # regenerate the app icons
 npm run build:artifact   # the whole app as one HTML file
 ```
@@ -368,6 +368,33 @@ of opening a pull request:
   `main`, and fails if the single-file bundle picks up an external reference.
 - `deploy.yml` — publishes to Pages from `main` only. It needs one manual step:
   repository **Settings → Pages → Source: GitHub Actions**.
+
+### Cache busting
+
+The worker precaches the shell into `zenith-shell-${VERSION}` and serves it
+cache-first, so `VERSION` *is* the cache-busting mechanism: while it stays the
+same, a returning visitor keeps being served the files already in their cache,
+and a redesign can ship to nobody. `activate` deletes every `zenith-` cache that
+is not the current pair, so moving the version throws the old shell away.
+
+Hand-bumping a constant is exactly the step that gets forgotten, so the build
+derives it. `tools/stamp-sw.ts` hashes every source the shell is built from
+(`src/**/*.ts`, `styles/*.css`, `index.html`, the manifest and the icons) and
+stamps the first 12 hex digits into the emitted `sw.js`. Identical inputs give an
+identical version — a deploy that changes nothing forces nobody to re-download —
+and any real change gives a new one. `tests/pwa.test.ts` recomputes the hash and
+fails on a stale stamp, and CI re-runs that check *after* building, where the
+emitted worker actually exists.
+
+What a visitor then sees: the page is network-first, so a deploy is picked up on
+the next load; the new worker installs in the background and the app offers
+**"A new version is ready — Reload"**, which posts `SKIP_WAITING` and reloads
+under the new worker. Nothing is silently swapped underneath an open session.
+
+To clear a cache by hand — a corrupted state, or testing the first-run
+experience — DevTools → Application → **Unregister** the worker and **Clear site
+data**, then reload. A plain hard reload bypasses the HTTP cache but not the
+worker's Cache Storage, which is why it often looks like nothing changed.
 
 ### Why the single-file build is not a substitute
 
