@@ -30,6 +30,7 @@ const SHELL: string[] = [
   './styles/base.css',
   './styles/components.css',
   './styles/views.css',
+  './styles/glass.css',
   './dist/app.js',
   './dist/router.js',
   './dist/store.js',

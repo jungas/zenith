@@ -23,6 +23,25 @@ body {
   padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px));
 }
 
+/**
+ * The mesh every glass surface is blurring. It is fixed to the viewport rather
+ * than scrolled with the page, so the blur behind a panel stays stable while
+ * you scroll instead of smearing. Painted behind everything at z-index -1, it
+ * is still part of the backdrop each panel samples.
+ */
+body::before {
+  content: '';
+  position: fixed;
+  inset: -12vmax;
+  z-index: -1;
+  background:
+    radial-gradient(30vmax 30vmax at 10% 6%, var(--mesh-1), transparent 62%),
+    radial-gradient(34vmax 34vmax at 92% 2%, var(--mesh-2), transparent 64%),
+    radial-gradient(28vmax 28vmax at 82% 78%, var(--mesh-3), transparent 62%),
+    radial-gradient(26vmax 26vmax at 14% 94%, var(--mesh-4), transparent 62%);
+  pointer-events: none;
+}
+
 h1,
 h2,
 h3,
@@ -76,7 +95,7 @@ svg {
   top: 0;
   z-index: 100;
   padding: var(--sp-2) var(--sp-3);
-  background: var(--surface-1);
+  background: var(--surface-solid);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
 }
@@ -112,8 +131,6 @@ svg {
   height: var(--header-h);
   padding: 0 var(--sp-4);
   padding-top: env(safe-area-inset-top, 0px);
-  background: color-mix(in srgb, var(--page) 88%, transparent);
-  backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--border);
 }
 
@@ -174,8 +191,6 @@ svg {
   justify-content: space-around;
   height: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px));
   padding-bottom: env(safe-area-inset-bottom, 0px);
-  background: color-mix(in srgb, var(--surface-1) 94%, transparent);
-  backdrop-filter: blur(12px);
   border-top: 1px solid var(--border);
 }
 
@@ -255,7 +270,6 @@ svg {
     padding: calc(var(--header-h) + var(--sp-4)) var(--sp-3) var(--sp-4);
     border-top: none;
     border-right: 1px solid var(--border);
-    background: var(--surface-1);
   }
 
   .nav-item {
@@ -336,5 +350,10 @@ svg {
   body {
     padding: 0;
     background: #fff;
+  }
+
+  /* Ink on paper: no mesh behind it. */
+  body::before {
+    display: none;
   }
 }

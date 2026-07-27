@@ -27,7 +27,11 @@ const OUT_DIR = join(ROOT, 'dist-artifact');
 const OUT_FILE = join(OUT_DIR, 'zenith.html');
 
 /** Stylesheets, in cascade order. */
-const STYLES = ['styles/tokens.css', 'styles/base.css', 'styles/components.css', 'styles/views.css'];
+const STYLES = [
+  'styles/tokens.css', 'styles/base.css', 'styles/components.css', 'styles/views.css',
+  // Last, as in index.html: the glass layer overrides the flat surfaces above it.
+  'styles/glass.css',
+];
 
 const read = (file: string): string => readFileSync(join(ROOT, file), 'utf8');
 

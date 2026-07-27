@@ -1,0 +1,130 @@
+/**
+ * The glass layer.
+ *
+ * Loaded last, on purpose: it takes the flat surfaces the components and views
+ * define and turns them into panels floating over the mesh in `base.css`. Doing
+ * it here rather than editing thirty component rules keeps the treatment one
+ * decision — and one place to undo it when a browser or a reader cannot take it.
+ *
+ * A glass panel is four things at once, and it stops reading as glass if any
+ * one is missing:
+ *   1. a translucent fill, so the mesh tints it
+ *   2. a blur of what is behind, so the tint is diffuse rather than a window
+ *   3. a sheen — a light gradient across the top-left, standing in for the
+ *      reflection a real pane would carry
+ *   4. a 1px white rim on the top edge, which is what reads as thickness
+ */
+
+.card,
+.stat-tile,
+.chart,
+.mini-card,
+.rta,
+.budget-summary,
+.budget-group,
+.tx-list,
+.account-list,
+.modal,
+.toast,
+.chart-tip,
+.due-row,
+.progress-row {
+  background-color: var(--surface-1);
+  background-image: var(--glass-sheen);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+}
+
+.card,
+.stat-tile,
+.chart,
+.mini-card,
+.rta,
+.budget-summary,
+.budget-group,
+.tx-list,
+.account-list {
+  box-shadow: var(--shadow-sm), var(--glass-rim);
+}
+
+/* Lifted above the page rather than sitting on it, so they carry more shadow. */
+.modal,
+.toast,
+.chart-tip {
+  box-shadow: var(--shadow-lg), var(--glass-rim);
+}
+
+/* The two chrome surfaces blur harder: they overlap scrolling content, and a
+   soft blur there reads as a smear rather than a frost. */
+.app-header,
+.app-nav {
+  background-color: var(--surface-1);
+  backdrop-filter: var(--glass-blur-strong);
+  -webkit-backdrop-filter: var(--glass-blur-strong);
+  box-shadow: var(--glass-rim);
+}
+
+@media (min-width: 60rem) {
+  /* As a rail the highlight belongs on its right edge, not its top. */
+  .app-nav {
+    box-shadow: inset -1px 0 0 var(--glass-rim-color);
+  }
+}
+
+/* A hovered row should still feel like part of the panel it sits in. */
+.account-row:hover,
+.tx-row:hover {
+  background-color: var(--wash);
+}
+
+/**
+ * Fallbacks. Both land in the same place — opaque surfaces, no blur, no mesh —
+ * but for different reasons: one is a stated preference, the other a missing
+ * capability. Without `backdrop-filter` a translucent fill is just see-through,
+ * which is harder to read than either extreme.
+ */
+@media (prefers-reduced-transparency: reduce) {
+  /* `:root:root` deliberately: the dark blocks in tokens.css are written as
+     `:root[data-theme='dark']` and `:root:not([data-theme='light'])`, so a
+     single `:root` here would lose to them and dark mode would stay glass. */
+  :root:root {
+    --surface-1: var(--surface-solid);
+    --surface-2: var(--surface-solid-2);
+    --glass-blur: none;
+    --glass-blur-strong: none;
+    --glass-sheen: none;
+    --glass-rim: none;
+    --mesh-1: transparent;
+    --mesh-2: transparent;
+    --mesh-3: transparent;
+    --mesh-4: transparent;
+  }
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root:root {
+    --surface-1: var(--surface-solid);
+    --surface-2: var(--surface-solid-2);
+    --glass-sheen: none;
+    --glass-rim: none;
+  }
+}
+
+/* Paper has no backdrop to blur. */
+@media print {
+  .card,
+  .stat-tile,
+  .chart,
+  .mini-card,
+  .rta,
+  .budget-summary,
+  .budget-group,
+  .tx-list,
+  .account-list {
+    background-color: #fff;
+    background-image: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    box-shadow: none;
+  }
+}

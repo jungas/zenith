@@ -11,7 +11,7 @@
   padding: 0 var(--sp-4);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
-  background: var(--surface-1);
+  background: var(--surface-2);
   color: var(--text-primary);
   font-size: var(--fs-sm);
   font-weight: 550;
@@ -607,7 +607,7 @@ select.input {
 }
 
 .segment.is-active {
-  background: var(--surface-1);
+  background: var(--surface-2);
   color: var(--text-primary);
   box-shadow: var(--shadow-sm);
 }
@@ -628,7 +628,7 @@ select.input {
 
 .swatch.is-active {
   border-color: var(--text-primary);
-  box-shadow: 0 0 0 2px var(--surface-1) inset;
+  box-shadow: 0 0 0 2px var(--surface-solid) inset;
 }
 
 .inline-note {
@@ -661,7 +661,7 @@ select.input {
   padding: var(--sp-2) var(--sp-3);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
-  background: var(--surface-1);
+  background: var(--surface-2);
   cursor: pointer;
   text-align: left;
 }
@@ -704,8 +704,9 @@ select.input {
 }
 
 .modal::backdrop {
-  background: rgba(11, 11, 11, 0.5);
-  backdrop-filter: blur(2px);
+  background: rgba(9, 11, 20, 0.45);
+  backdrop-filter: blur(8px) saturate(120%);
+  -webkit-backdrop-filter: blur(8px) saturate(120%);
 }
 
 .modal-panel {

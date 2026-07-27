@@ -140,7 +140,7 @@ it takes part in the same reconciliation identity as chequing and savings.
 ```
 index.html            app shell (loads dist/app.js)
 manifest.webmanifest  installability
-styles/               tokens · base · components · views
+styles/               tokens · base · components · views · glass (loaded last)
 src/
   app.ts              chrome, nav, theme, render loop
   router.ts           hash routing (works from file:// too)
@@ -272,6 +272,28 @@ every chart using them carries direct value labels **and** a table view. Status
 colours are reserved for state, never reused as a series, and always ship with an
 icon and a word.
 
+### Glass
+
+Surfaces are frosted glass: translucent panels blurring a fixed colour mesh. A
+panel is four things at once, and drops out of the illusion if any is missing —
+a translucent fill, a blur of what is behind it, a sheen across the top-left
+standing in for a reflection, and a 1px white rim that reads as thickness.
+
+`styles/glass.css` loads last and applies all four in one place, so the
+treatment is a single decision rather than thirty component rules — and a single
+place to undo. It is undone in three cases: `prefers-reduced-transparency`,
+browsers without `backdrop-filter`, and print. All three land on the same
+opaque surfaces.
+
+Transparency is where a design like this usually loses its accessibility, so
+contrast is **measured on the composite rather than assumed**: a browser pass
+samples the rendered pixel behind every text run — through the glass, the blur
+and the mesh — and compares it with the computed text colour. Every sampled run
+across six screens in both modes clears 4.5:1, the tightest being **4.70:1**.
+That pass is what moved the muted ink darker in light and lighter in dark, and
+it caught two pre-existing dark-mode status pills below the line (3.53:1 and
+4.31:1), fixed by darkening their tracks.
+
 ---
 
 ## Accessibility
@@ -279,8 +301,8 @@ icon and a word.
 Semantic landmarks and a skip link; `aria-current` on navigation; meters expose
 `role="meter"` with values; the dialog traps focus and closes on Escape; charts
 carry `aria-label`s, keyboard-focusable marks and a table view of the same data;
-status is never colour-alone; `prefers-reduced-motion` and `prefers-color-scheme`
-are both respected; hit targets are ≥40px and the primary actions sit within
+status is never colour-alone; `prefers-reduced-motion`, `prefers-color-scheme`
+and `prefers-reduced-transparency` are all respected; hit targets are ≥40px and the primary actions sit within
 thumb reach on a phone.
 
 ---
