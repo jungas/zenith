@@ -29,6 +29,13 @@ jobs:
       - name: Build the app
         run: npm run build
 
+      # `npm test` runs before the build, when sw.js may not exist yet, so the
+      # stamp check has nothing to look at. Re-run it against the built worker:
+      # an unstamped or stale version means returning visitors keep the old
+      # shell out of their cache and never see the deploy.
+      - name: Check the service worker is stamped with the current shell version
+        run: node --test tests/pwa.test.ts
+
       - name: Build the single-file bundle
         run: npm run build:artifact
 

@@ -5,7 +5,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "build": "tsc -p tsconfig.json && tsc -p tsconfig.sw.json",
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.sw.json && node tools/stamp-sw.ts",
     "start": "npm run build && node tools/serve.ts",
     "dev": "node tools/serve.ts",
     "typecheck": "tsc -p tsconfig.check.json",

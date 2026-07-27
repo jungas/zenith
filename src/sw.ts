@@ -18,7 +18,15 @@
 // service worker's own scope adds clients, skipWaiting and the lifecycle events.
 const sw = self as unknown as ServiceWorkerGlobalScope;
 
-const VERSION = 'v1.0.0';
+/**
+ * Stamped at build time by `tools/stamp-sw.ts` with a hash of the shell's
+ * sources — this literal is what a dev build without that step runs with.
+ *
+ * The version is the cache-busting mechanism: it names both caches below, and
+ * `activate` deletes every `zenith-` cache that is not one of them. A new
+ * version therefore means a fresh precache and the old one thrown away.
+ */
+const VERSION = 'dev';
 const SHELL_CACHE = `zenith-shell-${VERSION}`;
 const RUNTIME_CACHE = `zenith-runtime-${VERSION}`;
 
@@ -30,6 +38,7 @@ const SHELL: string[] = [
   './styles/base.css',
   './styles/components.css',
   './styles/views.css',
+  './styles/glass.css',
   './dist/app.js',
   './dist/router.js',
   './dist/store.js',

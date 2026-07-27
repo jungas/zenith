@@ -9,6 +9,8 @@ import { existsSync, globSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
+import { shellVersion } from '../tools/stamp-sw.ts';
+
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (file: string): string => readFileSync(join(ROOT, file), 'utf8');
 
@@ -61,6 +63,25 @@ test('the service worker does not precache anything that no longer exists', () =
     return !existsSync(join(ROOT, path));
   });
   assert.deepEqual(stale, [], `remove these from SHELL in src/sw.ts: ${stale.join(', ')}`);
+});
+
+/**
+ * The version names both caches, and `activate` deletes every `zenith-` cache
+ * that is not one of them — so a version that does not move means a returning
+ * visitor keeps the shell they already have, and a redesign ships to nobody.
+ * The build derives it from the shell's sources; this checks the built worker
+ * carries the value those sources imply.
+ */
+test('the built service worker is stamped with the current shell version', () => {
+  if (!existsSync(join(ROOT, 'sw.js'))) return; // not built yet — nothing to check
+  const version = read('sw.js').match(/const VERSION = '([^']*)';/)?.[1];
+  assert.ok(version, 'sw.js should declare a VERSION');
+  assert.notEqual(version, 'dev', 'sw.js was emitted but never stamped — run npm run build');
+  assert.equal(
+    version,
+    shellVersion(ROOT),
+    'sw.js is stamped with a stale version — rebuild so returning visitors get the new shell',
+  );
 });
 
 interface ManifestIcon {

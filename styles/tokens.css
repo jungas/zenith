@@ -1,6 +1,17 @@
 /**
  * Design tokens.
  *
+ * The surface treatment is glass: panels are translucent white (or white at low
+ * alpha on dark) blurred over a fixed colour mesh, so depth comes from the
+ * background showing through rather than from a drop shadow alone. Three rules
+ * keep that legible:
+ *   · ink never goes translucent — only surfaces do, and each one is opaque
+ *     enough that composited text still clears 4.5:1
+ *   · every glass surface carries a 1px white rim (`--glass-rim`), which is what
+ *     reads as an edge once the fill is see-through
+ *   · transparency is a progressive enhancement: `prefers-reduced-transparency`
+ *     and browsers without `backdrop-filter` get the opaque surfaces instead
+ *
  * The categorical series slots are a fixed, validated order — worst adjacent
  * CVD ΔE 9.1 light / 8.4 dark, worst adjacent normal-vision ΔE 19.6 / 19.3.
  * Dark is a *selected* set of steps for the dark surface, not an automatic flip.
@@ -16,18 +27,42 @@
   color-scheme: light;
 
   /* Surfaces & ink */
-  --surface-1: #fcfcfb;
-  --surface-2: #ffffff;
-  --page: #f9f9f7;
+  --surface-1: rgba(255, 255, 255, 0.52);
+  --surface-2: rgba(255, 255, 255, 0.74);
+  /* The opaque stand-ins: used directly by the few places that cannot be
+     see-through (the skip link, the swatch ring, print), and swapped in for the
+     glass surfaces wholesale when transparency is refused. */
+  --surface-solid: #ffffff;
+  --surface-solid-2: #ffffff;
+  --page: #dce4f6;
   --text-primary: #0b0b0b;
-  --text-secondary: #52514e;
-  --text-muted: #898781;
-  --grid-line: #e1e0d9;
-  --axis-line: #c3c2b7;
-  --border: rgba(11, 11, 11, 0.1);
+  --text-secondary: #4a4947;
+  --text-muted: #68675f;
+  --grid-line: #dcdfe8;
+  --axis-line: #b9bcc7;
+  --border: rgba(11, 11, 11, 0.09);
   --border-strong: rgba(11, 11, 11, 0.16);
   --wash: rgba(11, 11, 11, 0.04);
   --wash-strong: rgba(11, 11, 11, 0.07);
+
+  /* Glass: the blur, the rim that gives a translucent panel an edge, and the
+     mesh the whole thing floats on. */
+  --glass-blur: blur(18px) saturate(170%);
+  --glass-blur-strong: blur(28px) saturate(180%);
+  --glass-rim-color: rgba(255, 255, 255, 0.85);
+  --glass-rim: inset 0 1px 0 var(--glass-rim-color);
+  /* The reflection a real pane would carry: brightest at the top-left corner,
+     gone by the middle. */
+  --glass-sheen: linear-gradient(
+    148deg,
+    rgba(255, 255, 255, 0.55),
+    rgba(255, 255, 255, 0.12) 42%,
+    rgba(255, 255, 255, 0) 72%
+  );
+  --mesh-1: rgba(42, 120, 214, 0.6);
+  --mesh-2: rgba(74, 58, 167, 0.45);
+  --mesh-3: rgba(27, 175, 122, 0.38);
+  --mesh-4: rgba(232, 123, 164, 0.38);
 
   /* Categorical series — fixed order, never cycled */
   --series-1: #2a78d6;
@@ -96,9 +131,11 @@
   --radius-lg: 18px;
   --radius-pill: 999px;
 
-  --shadow-sm: 0 1px 2px rgba(11, 11, 11, 0.05);
-  --shadow: 0 2px 8px rgba(11, 11, 11, 0.07);
-  --shadow-lg: 0 12px 32px rgba(11, 11, 11, 0.14);
+  /* Two-part shadows: a tight contact shadow plus a wide soft one, which is
+     what stops a translucent panel from looking pasted on. */
+  --shadow-sm: 0 1px 2px rgba(20, 26, 45, 0.06), 0 6px 18px rgba(20, 26, 45, 0.05);
+  --shadow: 0 2px 6px rgba(20, 26, 45, 0.08), 0 14px 34px rgba(20, 26, 45, 0.08);
+  --shadow-lg: 0 8px 20px rgba(20, 26, 45, 0.14), 0 32px 64px rgba(20, 26, 45, 0.16);
 
   --header-h: 3.5rem;
   --nav-h: 4rem;
@@ -110,18 +147,36 @@
   :root:not([data-theme='light']) {
     color-scheme: dark;
 
-    --surface-1: #1a1a19;
-    --surface-2: #212120;
-    --page: #0d0d0d;
+    --surface-1: rgba(255, 255, 255, 0.075);
+    --surface-2: rgba(255, 255, 255, 0.12);
+    --surface-solid: #171a22;
+  --surface-solid-2: #20242e;
+    --surface-solid-2: #20242e;
+    --page: #080a10;
     --text-primary: #ffffff;
-    --text-secondary: #c3c2b7;
-    --text-muted: #898781;
-    --grid-line: #2c2c2a;
-    --axis-line: #383835;
-    --border: rgba(255, 255, 255, 0.1);
-    --border-strong: rgba(255, 255, 255, 0.18);
-    --wash: rgba(255, 255, 255, 0.045);
-    --wash-strong: rgba(255, 255, 255, 0.08);
+    --text-secondary: #c8cad6;
+    --text-muted: #a0a2b0;
+    --grid-line: #2b2e3a;
+    --axis-line: #3a3e4c;
+    --border: rgba(255, 255, 255, 0.12);
+    --border-strong: rgba(255, 255, 255, 0.2);
+    --wash: rgba(255, 255, 255, 0.07);
+    --wash-strong: rgba(255, 255, 255, 0.12);
+
+    /* Dark glass is white at low alpha, not a dimmed panel: the mesh below is
+       what gives it its colour. */
+    --glass-rim-color: rgba(255, 255, 255, 0.14);
+    --glass-rim: inset 0 1px 0 var(--glass-rim-color);
+    --glass-sheen: linear-gradient(
+      148deg,
+      rgba(255, 255, 255, 0.12),
+      rgba(255, 255, 255, 0.03) 45%,
+      rgba(255, 255, 255, 0) 72%
+    );
+    --mesh-1: rgba(57, 135, 229, 0.42);
+    --mesh-2: rgba(144, 133, 233, 0.34);
+    --mesh-3: rgba(25, 158, 112, 0.22);
+    --mesh-4: rgba(213, 81, 129, 0.2);
 
     --series-1: #3987e5;
     --series-2: #d95926;
@@ -137,10 +192,10 @@
     --danger-text: #e66767;
 
     --track-accent: #12365f;
-    --track-good: #144014;
+    --track-good: #0d280d;
     --track-warning: #4a3a10;
     --track-serious: #4a2e20;
-    --track-critical: #4a1f1f;
+    --track-critical: #3b1818;
     --track-neutral: #2c2c2a;
 
     --spark-line: #5c5b56;
@@ -151,9 +206,9 @@
     --accent-wash: rgba(57, 135, 229, 0.16);
     --focus-ring: #6da7ec;
 
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
-    --shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
-    --shadow-lg: 0 14px 36px rgba(0, 0, 0, 0.6);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4), 0 6px 18px rgba(0, 0, 0, 0.3);
+    --shadow: 0 2px 8px rgba(0, 0, 0, 0.45), 0 16px 36px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 10px 24px rgba(0, 0, 0, 0.55), 0 36px 72px rgba(0, 0, 0, 0.55);
   }
 }
 
@@ -161,18 +216,34 @@
 :root[data-theme='dark'] {
   color-scheme: dark;
 
-  --surface-1: #1a1a19;
-  --surface-2: #212120;
-  --page: #0d0d0d;
+  --surface-1: rgba(255, 255, 255, 0.075);
+  --surface-2: rgba(255, 255, 255, 0.12);
+  --surface-solid: #171a22;
+  --page: #080a10;
   --text-primary: #ffffff;
-  --text-secondary: #c3c2b7;
-  --text-muted: #898781;
-  --grid-line: #2c2c2a;
-  --axis-line: #383835;
-  --border: rgba(255, 255, 255, 0.1);
-  --border-strong: rgba(255, 255, 255, 0.18);
-  --wash: rgba(255, 255, 255, 0.045);
-  --wash-strong: rgba(255, 255, 255, 0.08);
+  --text-secondary: #c8cad6;
+  --text-muted: #a0a2b0;
+  --grid-line: #2b2e3a;
+  --axis-line: #3a3e4c;
+  --border: rgba(255, 255, 255, 0.12);
+  --border-strong: rgba(255, 255, 255, 0.2);
+  --wash: rgba(255, 255, 255, 0.07);
+  --wash-strong: rgba(255, 255, 255, 0.12);
+
+  /* Dark glass is white at low alpha, not a dimmed panel: the mesh below is
+     what gives it its colour. */
+  --glass-rim-color: rgba(255, 255, 255, 0.14);
+  --glass-rim: inset 0 1px 0 var(--glass-rim-color);
+  --glass-sheen: linear-gradient(
+    148deg,
+    rgba(255, 255, 255, 0.12),
+    rgba(255, 255, 255, 0.03) 45%,
+    rgba(255, 255, 255, 0) 72%
+  );
+  --mesh-1: rgba(57, 135, 229, 0.42);
+  --mesh-2: rgba(144, 133, 233, 0.34);
+  --mesh-3: rgba(25, 158, 112, 0.22);
+  --mesh-4: rgba(213, 81, 129, 0.2);
 
   --series-1: #3987e5;
   --series-2: #d95926;
@@ -188,10 +259,10 @@
   --danger-text: #e66767;
 
   --track-accent: #12365f;
-  --track-good: #144014;
+  --track-good: #0d280d;
   --track-warning: #4a3a10;
   --track-serious: #4a2e20;
-  --track-critical: #4a1f1f;
+  --track-critical: #3b1818;
   --track-neutral: #2c2c2a;
 
   --spark-line: #5c5b56;
@@ -202,7 +273,7 @@
   --accent-wash: rgba(57, 135, 229, 0.16);
   --focus-ring: #6da7ec;
 
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
-  --shadow-lg: 0 14px 36px rgba(0, 0, 0, 0.6);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4), 0 6px 18px rgba(0, 0, 0, 0.3);
+  --shadow: 0 2px 8px rgba(0, 0, 0, 0.45), 0 16px 36px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 10px 24px rgba(0, 0, 0, 0.55), 0 36px 72px rgba(0, 0, 0, 0.55);
 }

@@ -75,7 +75,9 @@
   flex: none;
 }
 
-.mini-card-head > div {
+/* The name column takes the slack; the icon plate keeps its 2rem square. This
+   has to out-specify `.mini-card-icon`, which the child selector would beat. */
+.mini-card-head > div:not(.mini-card-icon) {
   flex: 1;
   min-width: 0;
 }
