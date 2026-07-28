@@ -21,6 +21,7 @@ import { transactionsView } from './views/transactions.ts';
 import { accountsView } from './views/accounts.ts';
 import { reportsView } from './views/reports.ts';
 import { settingsView } from './views/settings.ts';
+import { importView } from './views/import.ts';
 
 interface NavItem {
   name: string;
@@ -51,6 +52,7 @@ const ROUTES: RouteDefinition[] = [
   { name: 'transactions', pattern: ['transactions'], view: (params) => transactionsView(params) },
   { name: 'reports', pattern: ['reports'], view: () => reportsView() },
   { name: 'settings', pattern: ['settings'], view: () => settingsView() },
+  { name: 'import', pattern: ['import'], view: () => importView() },
 ];
 
 let appRoot: HTMLElement | null = null;

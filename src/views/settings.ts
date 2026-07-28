@@ -222,6 +222,20 @@ export function settingsView(): HTMLElement {
         fileInput,
       ),
       h('div.divider'),
+      h('p.card-text', {
+        text: 'Statements from your bank can be read straight into the ledger. Password-protected PDFs are expected — Zenith asks for the password, opens the file on this device, and never stores it.',
+      }),
+      h(
+        'div.button-row',
+        null,
+        h(
+          'a.btn',
+          { href: '#/import' },
+          icon('ledger', { size: 16 }),
+          h('span', { text: 'Import a statement (PDF)' }),
+        ),
+      ),
+      h('div.divider'),
       h(
         'div.button-row',
         null,

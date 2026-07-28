@@ -108,12 +108,20 @@ export function transactionsView(params: RouteParams = {}): HTMLElement {
   append(
     root,
     sectionHeader('Transactions', {
-      actions: h(
-        'button.btn.btn-primary',
-        { type: 'button', onclick: () => openTransactionForm() },
-        icon('plus', { size: 16 }),
-        h('span', { text: 'Add' }),
-      ),
+      actions: [
+        h(
+          'a.btn',
+          { href: '#/import', title: 'Import a PDF statement' },
+          icon('upload', { size: 16 }),
+          h('span', { text: 'Import' }),
+        ),
+        h(
+          'button.btn.btn-primary',
+          { type: 'button', onclick: () => openTransactionForm() },
+          icon('plus', { size: 16 }),
+          h('span', { text: 'Add' }),
+        ),
+      ],
     }),
     // Filters live in one row above the list.
     h(
