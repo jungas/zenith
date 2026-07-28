@@ -21,7 +21,8 @@ const read = (file: string): string => readFileSync(join(ROOT, file), 'utf8');
  */
 function precachedPaths(): string[] {
   const source = read('src/sw.ts');
-  const start = source.indexOf('const SHELL');
+  // The array itself, not `SHELL_CACHE` or any other constant starting the same.
+  const start = source.indexOf('const SHELL:');
   const block = source.slice(start, source.indexOf('];', start));
   return [...block.matchAll(/'\.\/([^']*)'/g)].map((match) => match[1] ?? '').filter(Boolean);
 }
@@ -81,6 +82,43 @@ test('the built service worker is stamped with the current shell version', () =>
     version,
     shellVersion(ROOT),
     'sw.js is stamped with a stale version — rebuild so returning visitors get the new shell',
+  );
+});
+
+/**
+ * The app and the worker meet at one cache entry: the app writes the reminder
+ * schedule, the worker reads it when the browser wakes it. They cannot share a
+ * module — importing one into the worker would drag the whole app tree into its
+ * build output — so the constants are duplicated, and this is what keeps the
+ * two copies honest. A silent disagreement here means reminders that simply
+ * never arrive in the background.
+ */
+const literal = (file: string, name: string): string | undefined =>
+  read(file).match(new RegExp(`const ${name} = '([^']*)';`))?.[1];
+
+test('the app and the service worker agree on the reminder schedule', () => {
+  assert.equal(literal('src/sw.ts', 'REMINDER_CACHE'), literal('src/reminders.ts', 'SCHEDULE_CACHE'));
+  assert.equal(literal('src/sw.ts', 'REMINDER_KEY'), literal('src/reminders.ts', 'SCHEDULE_KEY'));
+  assert.equal(literal('src/sw.ts', 'REMINDER_TAG'), literal('src/reminders.ts', 'PERIODIC_TAG'));
+  assert.equal(
+    read('src/sw.ts').match(/const REMINDER_GRACE_DAYS = (\d+);/)?.[1],
+    read('src/core/reminders.ts').match(/REMINDER_GRACE_DAYS = (\d+);/)?.[1],
+    'the worker would fire reminders the engine considers stale, or drop ones it does not',
+  );
+});
+
+/**
+ * The schedule is data, not code: it has to outlive the shell it was written
+ * by, or every deploy would silently wipe the pending reminders — and the
+ * receipts that stop them arriving twice.
+ */
+test('a shell update does not throw the reminder schedule away', () => {
+  const source = read('src/sw.ts');
+  const activate = source.slice(source.indexOf("addEventListener('activate'"), source.indexOf("addEventListener('message'"));
+  assert.match(activate, /key !== REMINDER_CACHE/);
+  assert.ok(
+    !/REMINDER_CACHE = `?zenith-reminders-\$\{VERSION\}/.test(source),
+    'the reminder cache must not be named after the shell version',
   );
 });
 

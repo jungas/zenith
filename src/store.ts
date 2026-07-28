@@ -45,7 +45,13 @@ function migrate(parsed: Partial<AppState>): AppState {
     ...base,
     ...parsed,
     version: SCHEMA_VERSION,
-    settings: { ...base.settings, ...(parsed.settings || {}) },
+    settings: {
+      ...base.settings,
+      ...(parsed.settings || {}),
+      // Nested, so a spread alone would replace the defaults wholesale — a
+      // backup taken before reminders existed would land with none of them.
+      reminders: { ...base.settings.reminders, ...(parsed.settings?.reminders || {}) },
+    },
     accounts: Array.isArray(parsed.accounts) ? parsed.accounts : [],
     categories: Array.isArray(parsed.categories) ? parsed.categories : [],
     transactions: Array.isArray(parsed.transactions) ? parsed.transactions : [],

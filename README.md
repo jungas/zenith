@@ -10,7 +10,7 @@ dependency.
 ```bash
 npm install
 npm start         # builds, then serves http://localhost:4173
-npm test          # type-checks, then runs 60 tests
+npm test          # type-checks, then runs 79 tests
 npm run typecheck # types only
 npm run build     # dist/*.js + sw.js, stamped with a shell version
 npm run icons     # regenerate the app icons
@@ -80,7 +80,7 @@ debt case that a naïve version of the identity gets wrong.)
 | **Ledger** | One searchable list across every account, filterable by account, category and month |
 | **Reports** | Income vs spending, spending by category, card debt over time, savings rate — 3/6/12-month ranges |
 | **Accounts** | Net worth, cash, debt, per-account balances — chequing, savings, cash, digital wallets and cards |
-| **Settings** | Currency (26, including PHP) and locale, theme, utilisation warning threshold, install, JSON backup import/export, CSV export, sample data, integrity check |
+| **Settings** | Currency (26, including PHP) and locale, theme, utilisation warning threshold, payment reminders, install, JSON backup import/export, CSV export, sample data, integrity check |
 
 Also: one-level-deep **undo** on every mutation (`u`), `n` to add a transaction,
 full keyboard navigation, and a focus-trapped dialog.
@@ -135,6 +135,77 @@ it takes part in the same reconciliation identity as chequing and savings.
 
 ---
 
+## Reminders
+
+A bill you meant to pay is the most expensive thing an offline budget can miss,
+so Zenith raises **system notifications** before a card payment is due.
+
+They are real notifications — the same surface a messaging app uses — but they
+are **not push notifications**, and the distinction is the whole design. Push
+means a server holds a subscription and sends you something. Zenith has no
+server, no account and no subscription to hold, so instead each device works out
+its own reminders from the budget already in front of it. Nothing is sent
+anywhere, and turning them on adds no network call to an app that makes none.
+
+What that buys, and what it costs:
+
+- **No infrastructure, and no new privacy story.** The "everything stays in your
+  browser" claim survives the feature intact.
+- **Delivery depends on the browser waking the app.** Where periodic background
+  sync exists (installed PWAs on Chromium) the worker is woken on its own and
+  the reminder arrives on time. Everywhere else — Safari, Firefox, iOS — the
+  reminder is raised the next time Zenith is opened. Settings says which of the
+  two you are getting rather than leaving you to find out.
+- **Figures are as of the last time the app was open.** A reminder delivered in
+  the background quotes the statement it was planned against.
+
+### What it says, and when
+
+Reminders are derived, never stored: the same budget on the same day always
+produces the same list, with the same ids. That is what makes "show this once"
+possible with nothing but a set of ids to remember — the id *is* the receipt.
+
+| Reminder | Fires | Default |
+|---|---|---|
+| Payment due | `leadDays` before the due date, and again on the day | on |
+| Overdue | the day after the due date, repeating | on |
+| Unfunded debt | the day the statement closes, while coverage is short | on |
+| Statement closing | the day the statement closes | off |
+
+Two windows keep them honest. A reminder may be delivered up to **two days
+late** — a phone that was off should still say "your bill is due" the next
+morning — but no later, because by then it is news rather than a reminder.
+Overdue is the exception in kind: being late is a *state*, not a moment, so it
+repeats, spaced to exactly the grace window, so that every day a card is late is
+covered by one repeat and no day is covered by two. It gives up after three
+weeks, and hands over entirely once the next statement closes and the missed
+payment becomes part of a new bill.
+
+Because reminders are computed from the budget rather than the balance, they
+carry the thing the balance cannot say — *"$1,240.00 of it is not funded yet"*
+against *"Your budget covers it in full"*. On a card used inside the budget it
+is always the second: spending funded its own payment envelope as it happened.
+
+### How the worker gets them
+
+A service worker cannot read `localStorage`, so it cannot recompute anything.
+The app instead writes a precomputed schedule into the **Cache API** — the one
+store both sides can reach — and the worker only compares dates. The delivery
+receipts live in that same document, so a reminder shown in the background is
+not shown again when the app opens, and vice versa.
+
+The worker deliberately duplicates the handful of shapes it needs rather than
+importing `core/reminders.ts`: the worker is built to the repo root, and one
+import would drag the whole app tree out there with it. `tests/pwa.test.ts`
+checks the two copies still agree on the cache entry, the tag and the grace
+window — a silent disagreement there means reminders that simply never arrive.
+
+That cache is also the one `zenith-` cache `activate` does **not** delete. It is
+data, not code: naming it after the shell version would throw away every pending
+reminder, and every receipt, on each deploy.
+
+---
+
 ## Architecture
 
 ```
@@ -146,6 +217,7 @@ src/
   router.ts           hash routing (works from file:// too)
   store.ts            single state object, localStorage, pub/sub, undo stack
   pwa.ts              SW registration, install & update prompts, online state
+  reminders.ts        permission, delivery, and the schedule handed to the SW
   sw.ts               service worker → compiled to ./sw.js at the repo root
   core/               pure domain logic — no DOM, no storage
     model.ts          the type layer: Account union, state, constructors
@@ -153,12 +225,13 @@ src/
     dates.ts          'YYYY-MM-DD' / 'YYYY-MM' calendar maths
     budget.ts         the engine: rollover, activity, reserves, reconcile
     cards.ts          balances, cycles, minimums, coverage, payoff
+    reminders.ts      which notifications a budget earns, and on what day
     actions.ts        state transitions (pure: state → state)
     seed.ts           deterministic sample data
   ui/                 dom · icons · charts · components · modal · toast · forms
   views/              one module per screen
 tools/                static dev server · PNG icon generator
-tests/                node:test — engine, cards, charts, PWA wiring
+tests/                node:test — engine, cards, charts, reminders, PWA wiring
 dist/                 build output (git-ignored)
 ```
 
@@ -239,7 +312,8 @@ shipped with:
 ### Data & privacy
 
 Everything stays in your browser. There is no account, no sync and no network
-call — the service worker only ever caches Zenith's own files. Because that means
+call — the service worker only ever caches Zenith's own files, and reminders are
+worked out on the device rather than pushed to it. Because that means
 a cleared browser takes the budget with it, Settings has a one-click JSON backup,
 and the app says so plainly rather than burying it.
 
@@ -333,12 +407,15 @@ the ES modules into one scope would collide on every same-named local (`render`,
 CommonJS and `tools/build-artifact.ts` wraps each module in its own function,
 registered by path and required lazily — about twenty lines of registry.
 
-Two things the single file necessarily gives up:
+Three things the single file necessarily gives up:
 
 - **Offline caching.** A service worker has to be a separate same-origin script
   at the scope it controls, and it cannot be registered from a `data:` or
   `blob:` URL.
 - **Installability.** That needs the worker plus a linked manifest.
+- **Reminders.** Notifications that outlive the tab are raised through the
+  worker, so Settings says the preview cannot do it rather than offering a
+  switch that would do nothing.
 
 Everything else works, including localStorage persistence. The app detects this
 mode via `window.__ZENITH_EMBEDDED__`, which makes it skip worker registration,

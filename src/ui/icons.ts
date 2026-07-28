@@ -36,6 +36,7 @@ const PATHS = {
   link: 'M9 15l6-6M8 8H6a4 4 0 0 0 0 8h2m8-8h2a4 4 0 0 1 0 8h-2',
   menu: 'M4 7h16M4 12h16M4 17h16',
   install: 'M12 4v9m0 0 3.5-3.5M12 13 8.5 9.5M5 16v3h14v-3',
+  bell: 'M12 3a5 5 0 0 0-5 5v3.6L5 15h14l-2-3.4V8a5 5 0 0 0-5-5Zm-2 15a2 2 0 0 0 4 0',
   // The brand mark: the same rising line as the app icon, minus the end dot,
   // which would go muddy at chrome sizes.
   zenith: 'M4 16.8 9.4 11.4 13.8 14.6 19.8 6.4',

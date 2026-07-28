@@ -9,6 +9,7 @@ import { getState, subscribe, onPersistError, canUndo, undo, lastUndoLabel } fro
 import { defineRoutes, startRouter, getRoute } from './router.ts';
 import type { ActiveRoute, RouteDefinition } from './router.ts';
 import { initPwa, onPwaChange, installState, promptInstall } from './pwa.ts';
+import { initReminders } from './reminders.ts';
 import type { IconName } from './ui/icons.ts';
 import { isEmbedded } from './core/model.ts';
 import type { ThemePreference } from './core/model.ts';
@@ -65,6 +66,7 @@ export function start(): void {
 
   defineRoutes(ROUTES);
   initPwa();
+  initReminders();
 
   onPersistError((message) => toast(message, { tone: 'error', duration: 8000 }));
 

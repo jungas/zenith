@@ -166,12 +166,39 @@ export interface Transaction {
 /** Assigned amounts: month -> category -> cents. */
 export type Budgets = Record<MonthKey, Record<string, Cents>>;
 
+/**
+ * Which reminders the device may raise, and how far ahead. Notifications are
+ * generated on this device from the budget itself — see `core/reminders.ts` for
+ * what each flag produces and `src/reminders.ts` for how it is delivered.
+ */
+export interface ReminderSettings {
+  /** Master switch. Off until permission has actually been granted. */
+  enabled: boolean;
+  /** Days before a due date to send the first nudge; 0 sends only on the day. */
+  leadDays: number;
+  /** Payment due, due today, and overdue. */
+  payments: boolean;
+  /** The day a card's statement closes. */
+  statements: boolean;
+  /** Card debt with no cash set aside for it. */
+  unfunded: boolean;
+}
+
+export const REMINDER_DEFAULTS: ReminderSettings = {
+  enabled: false,
+  leadDays: 3,
+  payments: true,
+  statements: false,
+  unfunded: true,
+};
+
 export interface Settings {
   currency: string;
   locale: string;
   theme: ThemePreference;
   /** Warn when a card's utilisation crosses this (0–1). */
   utilizationWarn: number;
+  reminders: ReminderSettings;
   createdAt: string;
 }
 
@@ -284,6 +311,7 @@ export function emptyState(now: Date = new Date()): AppState {
       locale: 'en-US',
       theme: 'system',
       utilizationWarn: 0.3,
+      reminders: { ...REMINDER_DEFAULTS },
       createdAt: now.toISOString(),
     },
     accounts: [],

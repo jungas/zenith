@@ -6,16 +6,21 @@ import { sectionHeader, statusPill, field, select, input } from '../ui/component
 import { confirmDialog } from '../ui/modal.ts';
 import { toast } from '../ui/toast.ts';
 import { formatMoney, formatPercent } from '../core/money.ts';
-import { currentMonth } from '../core/dates.ts';
+import { currentMonth, daysBetween, formatDateShort, relativeDays, todayISO } from '../core/dates.ts';
 import { reconcile } from '../core/budget.ts';
 import { seedState } from '../core/seed.ts';
+import { pendingReminders, reminderSettings } from '../core/reminders.ts';
 import * as actions from '../core/actions.ts';
 import {
   clearAll, getState, moneyOpts, replaceState, updateSettings, commit,
 } from '../store.ts';
 import { installState, promptInstall } from '../pwa.ts';
+import {
+  backgroundDeliverySupported, disableReminders, enableReminders, notificationPermission,
+  notificationsSupported, sendTestNotification, setReminderSettings,
+} from '../reminders.ts';
 import { isEmbedded } from '../core/model.ts';
-import type { Cents, MoneyOptions, ThemePreference } from '../core/model.ts';
+import type { AppState, Cents, MoneyOptions, ThemePreference } from '../core/model.ts';
 
 // Alphabetical after the majors, so the list stays scannable as it grows.
 const CURRENCIES = [
@@ -150,6 +155,9 @@ export function settingsView(): HTMLElement {
           ),
     ),
   );
+
+  /* Reminders. */
+  append(root, remindersSection(state));
 
   /* Data. */
   const fileInput = h<HTMLInputElement>('input', {
@@ -357,6 +365,186 @@ export function settingsView(): HTMLElement {
   );
 
   return root;
+}
+
+const LEAD_DAYS = [
+  { value: '0', label: 'On the due date only' },
+  { value: '1', label: '1 day before' },
+  { value: '2', label: '2 days before' },
+  { value: '3', label: '3 days before' },
+  { value: '5', label: '5 days before' },
+  { value: '7', label: 'A week before' },
+];
+
+/**
+ * Reminders. There is no server behind these — the schedule is derived from the
+ * budget on this device — so the copy says what will and will not arrive rather
+ * than implying a push service that does not exist.
+ */
+function remindersSection(state: AppState): HTMLElement {
+  const settings = reminderSettings(state);
+  const permission = notificationPermission();
+  const section = h('section.card.block', null, h('h3.card-title', { text: 'Reminders' }));
+
+  if (!notificationsSupported()) {
+    append(
+      section,
+      h('p.card-text', {
+        text: isEmbedded()
+          ? 'The single-file preview cannot raise notifications — that needs the service worker only the full app ships with.'
+          : 'This browser does not offer notifications, so Zenith cannot remind you here. Everything else works as normal.',
+      }),
+    );
+    return section;
+  }
+
+  append(
+    section,
+    h('p.card-text', {
+      text: 'Zenith can raise a system notification when a card payment is coming up. Reminders are worked out on this device from your own budget — nothing is sent to a server, and no account is involved.',
+    }),
+  );
+
+  if (permission === 'denied') {
+    append(
+      section,
+      h(
+        'p.card-text',
+        null,
+        statusPill('warning', 'Blocked', { size: 'sm' }),
+        h('span', {
+          text: 'Notifications are blocked for this site. Allow them in your browser’s site settings, then come back here to switch reminders on.',
+        }),
+      ),
+    );
+    return section;
+  }
+
+  const on = settings.enabled && permission === 'granted';
+
+  append(
+    section,
+    h(
+      'label.check-row',
+      null,
+      h<HTMLInputElement>('input', {
+        type: 'checkbox',
+        class: 'checkbox',
+        checked: on,
+        onchange: async (event: Event) => {
+          const wanted = (event.target as HTMLInputElement).checked;
+          if (!wanted) {
+            await disableReminders();
+            toast('Reminders off.', { tone: 'info' });
+            return;
+          }
+          const result = await enableReminders();
+          if (result === 'granted') toast('Reminders on.', { tone: 'success' });
+          else {
+            (event.target as HTMLInputElement).checked = false;
+            toast('Your browser did not allow notifications.', { tone: 'warning' });
+          }
+        },
+      }),
+      h('span', { text: 'Remind me about my cards' }),
+    ),
+  );
+
+  if (!on) return section;
+
+  append(
+    section,
+    h(
+      'div.form-grid.block',
+      null,
+      field(
+        'First nudge',
+        select(
+          LEAD_DAYS.map((option) => ({ ...option, selected: Number(option.value) === settings.leadDays })),
+          {
+            onchange: (event: Event) =>
+              setReminderSettings({ leadDays: Number((event.target as HTMLSelectElement).value) || 0 }),
+          },
+        ),
+        { id: 'set-lead-days', hint: 'A second reminder always lands on the due date itself.' },
+      ),
+    ),
+    h(
+      'div.check-list.block',
+      null,
+      reminderToggle('Payments due and overdue', settings.payments, (payments) => setReminderSettings({ payments })),
+      reminderToggle('Unfunded card debt', settings.unfunded, (unfunded) => setReminderSettings({ unfunded })),
+      reminderToggle('The day a statement closes', settings.statements, (statements) =>
+        setReminderSettings({ statements }),
+      ),
+    ),
+    h(
+      'div.button-row.block',
+      null,
+      h(
+        'button.btn',
+        {
+          type: 'button',
+          onclick: async () => {
+            const sent = await sendTestNotification();
+            if (!sent) toast('That notification could not be shown.', { tone: 'error' });
+          },
+        },
+        icon('bell', { size: 16 }),
+        h('span', { text: 'Send a test notification' }),
+      ),
+    ),
+    h('p.muted-note.block', null, icon('info', { size: 15 }), h('span', {
+      text: backgroundDeliverySupported()
+        ? 'Reminders arrive while Zenith is open, and in the background when your browser wakes the app — install Zenith for the best chance of that. Amounts are as of the last time you opened it.'
+        : 'This browser only runs Zenith while it is open, so a reminder arrives the next time you open the app rather than at the moment it comes due.',
+    })),
+  );
+
+  const upcoming = pendingReminders(state).slice(0, 4);
+  append(
+    section,
+    upcoming.length
+      ? h(
+          'ul.mini-list.block',
+          { role: 'list' },
+          upcoming.map((reminder) => {
+            const days = daysBetween(todayISO(), reminder.fireOn);
+            return h(
+              'li.mini-row',
+              null,
+              // The notification's own words, so this is a preview rather than a
+              // description of one — which is why the date says "arrives": the
+              // title is written for the day it lands on, not for today.
+              h('span.mini-name', { text: reminder.title }),
+              h('span.mini-meta', {
+                text: days <= 0
+                  ? 'arrives now'
+                  : `arrives ${formatDateShort(reminder.fireOn, state.settings.locale)} · ${relativeDays(days)}`,
+              }),
+            );
+          }),
+        )
+      : h('p.muted-note.block', null, icon('check', { size: 15 }), h('span', {
+          text: 'Nothing to remind you about — no card has a balance with a payment coming up.',
+        })),
+  );
+
+  return section;
+}
+
+function reminderToggle(label: string, checked: boolean, onChange: (value: boolean) => void): HTMLElement {
+  return h(
+    'label.check-row',
+    null,
+    h<HTMLInputElement>('input', {
+      type: 'checkbox',
+      class: 'checkbox',
+      checked,
+      onchange: (event: Event) => onChange((event.target as HTMLInputElement).checked),
+    }),
+    h('span', { text: label }),
+  );
 }
 
 function integrityRow(label: string, cents: Cents, money: Required<Pick<MoneyOptions, 'currency' | 'locale'>>, emphasis = false): HTMLElement {
