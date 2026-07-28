@@ -586,6 +586,13 @@ select.input {
   color: var(--text-secondary);
 }
 
+/* A stack of them: each row is its own hit target, so they need room. */
+.check-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
 .segmented {
   display: inline-flex;
   padding: 3px;

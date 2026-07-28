@@ -4,7 +4,7 @@
  * of the card's balance the budget has actually set aside cash for.
  */
 
-import { currentMonth, daysBetween, monthOf, nextDayOfMonth, parseISO, todayISO, toISO } from './dates.ts';
+import { addDays, currentMonth, daysBetween, monthOf, nextDayOfMonth, parseISO, todayISO, toISO } from './dates.ts';
 import { accountBalance, categoryRow, monthSummary, ledgerTransactions } from './budget.ts';
 import { isCredit, paymentCategoryFor } from './model.ts';
 import type {
@@ -147,7 +147,7 @@ export function statementCycle(card: CreditAccount, fromISO: ISODate = todayISO(
   // The due date follows the close date; if the configured day falls on or
   // before the close it belongs to the following month.
   const dueAfterLast = nextDayOfMonth(dueDay, lastClose);
-  const dueDate = dueAfterLast === lastClose ? nextDayOfMonth(dueDay, addDay(lastClose)) : dueAfterLast;
+  const dueDate = dueAfterLast === lastClose ? nextDayOfMonth(dueDay, addDays(lastClose, 1)) : dueAfterLast;
 
   return {
     lastClose,
@@ -157,12 +157,6 @@ export function statementCycle(card: CreditAccount, fromISO: ISODate = todayISO(
     daysUntilClose: daysBetween(fromISO, nextClose),
     overdue: daysBetween(fromISO, dueDate) < 0,
   };
-}
-
-function addDay(iso: ISODate): ISODate {
-  const date = parseISO(iso);
-  date.setDate(date.getDate() + 1);
-  return toISO(date.getFullYear(), date.getMonth() + 1, date.getDate());
 }
 
 /** Balance as of the last statement close — what the issuer actually billed. */

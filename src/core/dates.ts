@@ -21,6 +21,13 @@ export function parseISO(iso: ISODate): Date {
   return new Date(y, m - 1, d);
 }
 
+/** Shift a calendar date by whole days, forwards or back. */
+export function addDays(iso: ISODate, delta: number): ISODate {
+  const date = parseISO(iso);
+  date.setDate(date.getDate() + delta);
+  return toISO(date.getFullYear(), date.getMonth() + 1, date.getDate());
+}
+
 /** 'YYYY-MM-DD' -> 'YYYY-MM' */
 export function monthOf(iso: ISODate): MonthKey {
   return String(iso).slice(0, 7);

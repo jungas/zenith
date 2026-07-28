@@ -14,6 +14,8 @@ import {
 } from '../core/budget.ts';
 import { debtSummary, upcomingPayments } from '../core/cards.ts';
 import { getState, moneyOpts } from '../store.ts';
+import { enableReminders, notificationPermission, notificationsSupported, remindersOn } from '../reminders.ts';
+import { toast } from '../ui/toast.ts';
 import { navigate } from '../router.ts';
 import { transactionRow } from './transactions.ts';
 import { foldToOther, toCategoryRows } from './chart-data.ts';
@@ -154,7 +156,7 @@ export function dashboardView({ month = currentMonth() }: { month?: MonthKey } =
       h(
         'section.block',
         null,
-        sectionHeader('Payments due', { subtitle: 'Next 30 days' }),
+        sectionHeader('Payments due', { subtitle: 'Next 30 days', actions: remindMeButton() }),
         h(
           'ul.due-list',
           { role: 'list' },
@@ -315,6 +317,29 @@ export function dashboardView({ month = currentMonth() }: { month?: MonthKey } =
   );
 
   return root;
+}
+
+/**
+ * Offered beside the bills it would be about, which is the only place the ask
+ * makes sense — and only while it can be granted. Once reminders are on, or the
+ * browser has been told no, the button has nothing to offer and disappears.
+ */
+function remindMeButton(): HTMLElement | undefined {
+  if (!notificationsSupported() || notificationPermission() === 'denied' || remindersOn()) return undefined;
+  return h(
+    'button.btn.btn-sm',
+    {
+      type: 'button',
+      title: 'Get a notification before a payment is due',
+      onclick: async () => {
+        const result = await enableReminders();
+        if (result === 'granted') toast('Reminders on — Settings has the details.', { tone: 'success' });
+        else toast('Your browser did not allow notifications.', { tone: 'warning' });
+      },
+    },
+    icon('bell', { size: 15 }),
+    h('span', { text: 'Remind me' }),
+  );
 }
 
 function cardTile(snap: CardSnapshot, money: Required<Pick<MoneyOptions, 'currency' | 'locale'>>, month: MonthKey): HTMLElement {

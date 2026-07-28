@@ -10,6 +10,9 @@
  *
  * There is no network dependency for data: the budget lives in localStorage, so
  * "offline" is the normal case rather than a degraded one.
+ *
+ * It also delivers reminders while the app is closed — see the reminders
+ * section below.
  */
 
 /// <reference lib="webworker" />
@@ -30,6 +33,14 @@ const VERSION = 'dev';
 const SHELL_CACHE = `zenith-shell-${VERSION}`;
 const RUNTIME_CACHE = `zenith-runtime-${VERSION}`;
 
+/**
+ * The reminder schedule the app writes for this worker. Deliberately *not*
+ * versioned with the shell: it is data, not code, and must survive an update.
+ */
+const REMINDER_CACHE = 'zenith-reminders';
+const REMINDER_KEY = './reminder-schedule.json';
+const REMINDER_TAG = 'zenith-reminders';
+
 const SHELL: string[] = [
   './',
   './index.html',
@@ -43,12 +54,14 @@ const SHELL: string[] = [
   './dist/router.js',
   './dist/store.js',
   './dist/pwa.js',
+  './dist/reminders.js',
   './dist/core/money.js',
   './dist/core/dates.js',
   './dist/core/model.js',
   './dist/core/budget.js',
   './dist/core/cards.js',
   './dist/core/actions.js',
+  './dist/core/reminders.js',
   './dist/core/seed.js',
   './dist/ui/dom.js',
   './dist/ui/icons.js',
@@ -95,7 +108,13 @@ sw.addEventListener('activate', (event: ExtendableEvent) => {
       const keys = await caches.keys();
       await Promise.all(
         keys
-          .filter((key) => key.startsWith('zenith-') && key !== SHELL_CACHE && key !== RUNTIME_CACHE)
+          .filter(
+            (key) =>
+              key.startsWith('zenith-') &&
+              key !== SHELL_CACHE &&
+              key !== RUNTIME_CACHE &&
+              key !== REMINDER_CACHE,
+          )
           .map((key) => caches.delete(key)),
       );
       await sw.clients.claim();
@@ -164,4 +183,132 @@ async function revalidate(request: Request): Promise<void> {
   if (!response.ok) return;
   const cache = await caches.open(SHELL_CACHE);
   await cache.put(request, response);
+}
+
+/* ── Reminders ──────────────────────────────────────────────────────────────
+ *
+ * A worker cannot read localStorage, so it cannot recompute anything from the
+ * budget. The app instead writes a precomputed schedule into the Cache API —
+ * the one store both sides can reach — and all this worker does is compare
+ * dates and show what is due. `delivered` is the shared receipt list that keeps
+ * a reminder from arriving twice, whichever side raised it.
+ *
+ * The shapes below deliberately duplicate `core/reminders.ts` rather than
+ * importing it: pulling an app module in here would drag the whole module tree
+ * into the worker's own build output, which is emitted to the repo root.
+ * `tests/pwa.test.ts` checks the two sides still agree on the cache entry.
+ */
+
+interface ScheduledReminder {
+  id: string;
+  fireOn: string;
+  title: string;
+  body: string;
+  route: string;
+  urgent?: boolean;
+}
+
+interface ReminderSchedule {
+  version: number;
+  updatedAt: string;
+  reminders: ScheduledReminder[];
+  delivered: string[];
+}
+
+/** Matches `REMINDER_GRACE_DAYS` in core/reminders.ts. */
+const REMINDER_GRACE_DAYS = 2;
+const REMINDER_MAX_PER_WAKE = 3;
+const REMINDER_LOG_LIMIT = 200;
+
+// 'periodicsync' is not in the TypeScript lib yet, so the event arrives as a
+// plain Event and is narrowed here.
+sw.addEventListener('periodicsync', (event: Event) => {
+  const sync = event as ExtendableEvent & { tag?: string };
+  if (sync.tag !== REMINDER_TAG) return;
+  sync.waitUntil(deliverDueReminders());
+});
+
+sw.addEventListener('notificationclick', (event: NotificationEvent) => {
+  event.notification.close();
+  const data = event.notification.data as { route?: string } | null;
+  event.waitUntil(openApp(typeof data?.route === 'string' ? data.route : '#/'));
+});
+
+async function deliverDueReminders(): Promise<void> {
+  const cache = await caches.open(REMINDER_CACHE);
+  const stored = await cache.match(REMINDER_KEY);
+  if (!stored) return;
+
+  const schedule = (await stored.json()) as ReminderSchedule | null;
+  if (!schedule || !Array.isArray(schedule.reminders)) return;
+
+  const delivered = new Set(Array.isArray(schedule.delivered) ? schedule.delivered : []);
+  const today = localDate();
+  const shown: string[] = [];
+
+  for (const reminder of schedule.reminders) {
+    if (shown.length >= REMINDER_MAX_PER_WAKE) break;
+    if (delivered.has(reminder.id)) continue;
+    const offset = daysUntil(today, reminder.fireOn);
+    // Not yet, or so late that saying it now is noise rather than a reminder.
+    if (offset > 0 || offset < -REMINDER_GRACE_DAYS) continue;
+    try {
+      await sw.registration.showNotification(reminder.title, {
+        body: reminder.body,
+        tag: reminder.id,
+        icon: './assets/icons/icon-192.png',
+        badge: './assets/icons/icon-192.png',
+        data: { route: reminder.route },
+        requireInteraction: reminder.urgent === true,
+      });
+      shown.push(reminder.id);
+    } catch (error) {
+      // Permission revoked since the schedule was written; stop trying.
+      console.warn('[sw] could not show a reminder', error);
+      return;
+    }
+  }
+
+  if (!shown.length) return;
+  const next: ReminderSchedule = {
+    ...schedule,
+    delivered: [...delivered, ...shown].slice(-REMINDER_LOG_LIMIT),
+  };
+  await cache.put(
+    REMINDER_KEY,
+    new Response(JSON.stringify(next), { headers: { 'Content-Type': 'application/json' } }),
+  );
+}
+
+/** Focus the app if it is already open, otherwise launch it, at `route`. */
+async function openApp(route: string): Promise<void> {
+  const target = new URL(`./index.html${route}`, sw.location.href);
+  const clients = (await sw.clients.matchAll({
+    type: 'window',
+    includeUncontrolled: true,
+  })) as readonly WindowClient[];
+
+  for (const client of clients) {
+    if (new URL(client.url).origin !== target.origin) continue;
+    await client.focus();
+    // Same document, different hash: navigate rather than open a second window.
+    await client.navigate(target.href).catch(() => {});
+    return;
+  }
+  await sw.clients.openWindow(target.href);
+}
+
+/** Today in the device's own timezone, as 'YYYY-MM-DD'. */
+function localDate(now: Date = new Date()): string {
+  const pad = (value: number): string => String(value).padStart(2, '0');
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
+/** Whole days from `from` to `to`; negative when `to` has already passed. */
+function daysUntil(from: string, to: string): number {
+  const midnight = (iso: string): number => {
+    const [year = 1970, month = 1, day = 1] = String(iso).split('-').map(Number);
+    return new Date(year, month - 1, day).getTime();
+  };
+  return Math.round((midnight(to) - midnight(from)) / 86_400_000);
 }
