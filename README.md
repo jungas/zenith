@@ -10,7 +10,7 @@ dependency.
 ```bash
 npm install
 npm start         # builds, then serves http://localhost:4173
-npm test          # type-checks, then runs 79 tests
+npm test          # type-checks, then runs 126 tests
 npm run typecheck # types only
 npm run build     # dist/*.js + sw.js, stamped with a shell version
 npm run icons     # regenerate the app icons
@@ -80,7 +80,8 @@ debt case that a naïve version of the identity gets wrong.)
 | **Ledger** | One searchable list across every account, filterable by account, category and month |
 | **Reports** | Income vs spending, spending by category, card debt over time, savings rate — 3/6/12-month ranges |
 | **Accounts** | Net worth, cash, debt, per-account balances — chequing, savings, cash, digital wallets and cards |
-| **Settings** | Currency (26, including PHP) and locale, theme, utilisation warning threshold, payment reminders, install, JSON backup import/export, CSV export, sample data, integrity check |
+| **Import** | Read a PDF statement — including a password-protected one — and turn it into transactions, with every row reviewable before anything is saved |
+| **Settings** | Currency (26, including PHP) and locale, theme, utilisation warning threshold, payment reminders, install, JSON backup import/export, CSV export, statement import, sample data, integrity check |
 
 Also: one-level-deep **undo** on every mutation (`u`), `n` to add a transaction,
 full keyboard navigation, and a focus-trapped dialog.
@@ -206,6 +207,113 @@ reminder, and every receipt, on each deploy.
 
 ---
 
+## Importing a statement
+
+A budget you have to type in twice is a budget you stop keeping, so Zenith reads
+the PDF your bank emails you and proposes the transactions in it.
+
+Statements from Philippine banks arrive **password protected**, so that is the
+first thing the flow handles rather than the last. Choosing a file that turns out
+to be encrypted stops everything and asks:
+
+> **Password required** — "bdo-card-aes256.pdf" is password protected. Zenith
+> needs the password to read it — it is used here and now, and never saved.
+
+Nothing continues until the password is right. A wrong one says so and asks
+again; cancelling abandons the import. The password is passed straight to the
+parser and is never put in the state, which is what keeps it out of
+localStorage and out of a backup export.
+
+### It reads the PDF itself
+
+There is no PDF library. `src/core/pdf/` is a reader written for this app,
+because a runtime dependency is the one thing this repo does not have and a
+statement reader is not a good reason to acquire one:
+
+| Module | What it does |
+|---|---|
+| `inflate.ts` | DEFLATE and zlib, synchronously — `DecompressionStream` is async and would spread `await` through the whole parser |
+| `crypt.ts` | MD5, SHA-256/384/512, RC4 and AES. WebCrypto has neither MD5 nor RC4, and its AES-CBC always pads |
+| `security.ts` | The standard security handler, revisions 2–6: RC4-40, RC4-128, AES-128, AES-256, user **and** owner passwords |
+| `objects.ts` · `document.ts` | The object layer, and a document assembled by *scanning* for `N G obj` rather than trusting the cross-reference table — a broken xref is the most common way a real statement resists being read |
+| `filters.ts` | Flate, LZW, ASCII85, ASCIIHex, RunLength, and PNG/TIFF predictors |
+| `fonts.ts` · `text.ts` | Glyph decoding (ToUnicode, WinAnsi, MacRoman, Identity-H) and the content-stream interpreter that turns drawing instructions back into positioned lines |
+
+The cryptography is only ever used to *open* a file the person already has the
+password for, on their own device.
+
+### Columns, not spacing
+
+A PDF contains no rows and no columns — only instructions to place runs of
+glyphs at coordinates, frequently in an order that has nothing to do with
+reading order. `core/statement.ts` recovers the table from the geometry: runs
+are grouped into lines by baseline, and each amount is matched to a column
+heading by its **right edge**, because that is what right-aligned numbers share.
+
+That is what tells a debit from a credit on a layout like RCBC's, where the only
+difference between money arriving and money leaving is which of two columns the
+figure sits in — a distinction that vanishes the moment the line is flattened
+into text.
+
+Getting the widths right matters more than it sounds: a heading set in
+Helvetica-Bold with no `/Widths` array comes out 26 points narrow under a
+"half an em per character" guess, and stops matching its own column. The
+standard-14 metrics are in `fonts.ts` for exactly that reason.
+
+### Which banks
+
+Layouts modelled on **BDO**, **BPI**, **UnionBank** and **RCBC** are covered by
+fixtures in `tests/fixtures/`, and each is asserted row by row — a parser that
+finds the right *number* of transactions and puts half of them on the wrong side
+of the ledger is worse than one that finds none. Between them they exercise
+`MM/DD/YYYY` against `DD MMM YY`, one amount column against split
+`PURCHASES/CHARGES` and `PAYMENTS/CREDITS` columns, `CR` markers against column
+position, and four vocabularies for "total amount due".
+
+The parser carries **no per-bank layout rules**, and that is deliberate. A
+statement's own columns and dates describe it better than a guess about what a
+bank's template looked like when this was written — and a template that changed
+would then quietly produce *wrong* figures rather than none. What is per-bank is
+only recognition of the name, which preselects the account, and the password
+hint the prompt offers.
+
+Other banks are not excluded; they are simply not proven. The parse is generic,
+so a statement from anywhere may well work — the review table is where you find
+out.
+
+### Rows become the right kind of transaction
+
+The arithmetic is the easy part. The hard part is which *shape* each row has to
+take so the invariant above still holds afterwards:
+
+| Row | Recorded as | Why |
+|---|---|---|
+| Charge on a card | negative expense, categorised | draws the envelope down and reserves the same cash for the bill |
+| Refund on a card | **positive expense**, categorised | returns money to the envelope *and* releases the reserve, because the debt fell too |
+| Payment to a card | a **transfer** from an asset account | the cash genuinely moved; recording it on the card alone would invent money |
+| Spending or income on a bank account | negative expense / positive income | the ordinary case |
+
+The one that most wants to be wrong is the card refund: recording it as income
+would add to Ready to assign without a peso arriving anywhere, and Settings →
+Budget integrity would start reporting a difference. `tests/statement-import.test.ts`
+runs the reconciliation identity against every one of these shapes.
+
+A payment with no source account chosen is **skipped rather than approximated**.
+The money came out of somewhere, and guessing where would unbalance that account.
+
+### Nothing is saved until you say so
+
+The parse produces *proposals*. Every row is shown with its date, payee,
+category and amount all editable, and anything that looks like a transaction
+already in the ledger arrives unticked, naming the one it matched. Categories
+are guessed from your own history — the category that payee went to last time —
+rather than from a shipped merchant list that would be wrong for anyone whose
+spending does not look like the author's.
+
+What it will not do: read a **scanned** statement. If the PDF is a photograph of
+a page rather than text, there is nothing to extract, and the app says so instead
+of importing nothing and calling it success.
+
 ## Architecture
 
 ```
@@ -228,7 +336,11 @@ src/
     reminders.ts      which notifications a budget earns, and on what day
     actions.ts        state transitions (pure: state → state)
     seed.ts           deterministic sample data
-  ui/                 dom · icons · charts · components · modal · toast · forms
+    statement.ts      reading a bank statement's lines into candidate rows
+    statement-import.ts  those rows as transactions, deduped against the ledger
+    pdf/              a dependency-free PDF reader — inflate, crypto, objects,
+                      filters, fonts, text extraction (see § Importing a statement)
+  ui/                 dom · icons · charts · components · modal · toast · forms · password
   views/              one module per screen
 tools/                static dev server · PNG icon generator
 tests/                node:test — engine, cards, charts, reminders, PWA wiring
@@ -311,7 +423,8 @@ shipped with:
 
 ### Data & privacy
 
-Everything stays in your browser. There is no account, no sync and no network
+Everything stays in your browser. A statement you import is read on the device
+and its password is never stored. There is no account, no sync and no network
 call — the service worker only ever caches Zenith's own files, and reminders are
 worked out on the device rather than pushed to it. Because that means
 a cleared browser takes the budget with it, Settings has a one-click JSON backup,
