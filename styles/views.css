@@ -1628,3 +1628,55 @@
   font-size: var(--fs-xs);
   color: var(--text-muted);
 }
+
+/* ── Instalment plans ───────────────────────────────────────────────── */
+
+.installment-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  margin-top: var(--sp-3);
+}
+
+.installment-row.is-finished {
+  opacity: 0.6;
+}
+
+.installment-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  margin-bottom: 4px;
+}
+
+.installment-name {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 3px;
+}
+
+.installment-name:hover,
+.installment-name:focus-visible {
+  text-decoration-color: currentColor;
+}
+
+.installment-amount {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.installment-meta {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+}

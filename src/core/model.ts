@@ -164,6 +164,39 @@ export interface SharedLimit {
 }
 
 /**
+ * A purchase converted into fixed monthly billings on a card.
+ *
+ * Ubiquitous in the Philippines: a ₱24,000 appliance becomes "3/12" on the
+ * statement — the third of twelve monthly instalments. What the statement shows
+ * is the instalment, but what you have committed to is the whole remaining run
+ * of them, and that is the part a budget needs to see coming. Nine more months
+ * of ₱2,000 is a fact about next year's budget, not a surprise to meet monthly.
+ *
+ * Tracking a plan **creates no transactions**. Each month's instalment already
+ * arrives as an ordinary charge — typed in or imported from the statement — and
+ * generating them here would bill everything twice. A plan is a schedule of
+ * what is still to come, not a second copy of what has happened.
+ */
+export interface Installment {
+  id: string;
+  /** The credit card being billed. */
+  accountId: string;
+  description: string;
+  /** What is billed each month. */
+  monthlyAmount: Cents;
+  /** How many monthly instalments the plan runs for. */
+  months: number;
+  /** The month the first instalment was billed. */
+  startMonth: MonthKey;
+  /**
+   * The purchase price, when known. A plan billing more than this in total is
+   * not 0% however it was sold, and the difference is what it costs.
+   */
+  principal: Cents | null;
+  note: string;
+}
+
+/**
  * A discriminated union, so the card-only terms cannot be read off a chequing
  * account without narrowing through `isCredit` first.
  */
@@ -253,6 +286,8 @@ export interface AppState {
   transactions: Transaction[];
   /** Credit limits shared by two or more cards from the same bank. */
   sharedLimits: SharedLimit[];
+  /** Purchases being billed in fixed monthly instalments. */
+  installments: Installment[];
 }
 
 /** Currency/locale pair threaded through every formatting call. */
@@ -329,6 +364,20 @@ export function makeSharedLimit(patch: Partial<SharedLimit> = {}): SharedLimit {
   };
 }
 
+export function makeInstallment(patch: Partial<Installment> = {}): Installment {
+  return {
+    id: newId('inst'),
+    accountId: '',
+    description: 'Instalment plan',
+    monthlyAmount: 0,
+    months: 0,
+    startMonth: '',
+    principal: null,
+    note: '',
+    ...patch,
+  };
+}
+
 export function makeCategory(patch: Partial<Category> = {}): Category {
   return {
     id: newId('cat'),
@@ -376,6 +425,7 @@ export function emptyState(now: Date = new Date()): AppState {
     budgets: {},
     transactions: [],
     sharedLimits: [],
+    installments: [],
   };
 }
 

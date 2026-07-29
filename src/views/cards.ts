@@ -11,9 +11,13 @@ import { h, append, mount } from '../ui/dom.ts';
 import { icon, type IconName } from '../ui/icons.ts';
 import { statTile, statusPill, sectionHeader, emptyState, field, moneyInput } from '../ui/components.ts';
 import { meter, lineChart, tableView, type LinePoint } from '../ui/charts.ts';
-import { openAccountForm, openPaymentForm, openFundCardForm, openTransactionForm } from '../ui/forms.ts';
+import {
+  openAccountForm, openPaymentForm, openFundCardForm, openTransactionForm, openInstallmentForm,
+} from '../ui/forms.ts';
 import { formatMoney, formatPercent, parseMoney, centsToInput } from '../core/money.ts';
 import { currentMonth, formatDate, formatDateShort, monthLabel, relativeDays } from '../core/dates.ts';
+import { cardInstallments, installmentSummary } from '../core/installments.ts';
+import type { InstallmentSnapshot } from '../core/installments.ts';
 import { queryTransactions } from '../core/budget.ts';
 import {
   cardBalance, cardSnapshot, creditAccounts, debtSummary, payoffComparison, quotedRate,
@@ -24,6 +28,94 @@ import { transactionRow } from './transactions.ts';
 import type { Cents, CreditAccount, MonthKey, MoneyOptions } from '../core/model.ts';
 import { isCredit } from '../core/model.ts';
 import type { CardSnapshot } from '../core/cards.ts';
+
+/**
+ * Every instalment plan on this card, with what is left of each.
+ *
+ * A plan is shown as a progress bar because the useful question is not how much
+ * has gone but how many are left: "4 of 12, finishes March 2027" plans a year
+ * ahead in a way a running total does not.
+ */
+function installmentPanel(
+  cardId: string,
+  money: Required<Pick<MoneyOptions, 'currency' | 'locale'>>,
+  month: MonthKey,
+): HTMLElement {
+  const plans = cardInstallments(getState(), cardId, month);
+  const summary = installmentSummary(getState(), { cardId, month });
+
+  const addButton = h(
+    'button.btn.btn-sm',
+    { type: 'button', onclick: () => openInstallmentForm({ cardId }) },
+    icon('plus', { size: 15 }),
+    h('span', { text: 'Track a plan' }),
+  );
+
+  if (!plans.length) {
+    return h(
+      'section.card.block',
+      null,
+      h('div.import-list-head', null,
+        h('h3.card-title', { text: 'Instalment plans' }),
+        addButton,
+      ),
+      h('p.card-text', {
+        text: 'Nothing on instalment. When a purchase is spread over monthly billings, tracking it here shows how much of each future bill is already committed — and when it stops.',
+      }),
+    );
+  }
+
+  return h(
+    'section.card.block',
+    null,
+    h('div.import-list-head', null,
+      h('h3.card-title', { text: 'Instalment plans' }),
+      addButton,
+    ),
+    h('p.card-text', {
+      text: summary.activeCount
+        ? `${formatMoney(summary.monthly, money)} of this month's bill is instalments, with ${formatMoney(summary.remaining, money)} still to be billed after it.`
+        : 'Every plan on this card has finished billing.',
+    }),
+    h('ul.installment-list', { role: 'list' }, plans.map((plan) => installmentRow(plan, money))),
+  );
+}
+
+function installmentRow(
+  snapshot: InstallmentSnapshot,
+  money: Required<Pick<MoneyOptions, 'currency' | 'locale'>>,
+): HTMLElement {
+  const { plan } = snapshot;
+  return h(
+    'li',
+    { class: `installment-row${snapshot.finished ? ' is-finished' : ''}` },
+    h(
+      'div.installment-head',
+      null,
+      h('button.installment-name', {
+        type: 'button',
+        text: plan.description,
+        onclick: () => openInstallmentForm({ cardId: plan.accountId, installment: plan }),
+      }),
+      h('span.installment-amount', { text: `${formatMoney(plan.monthlyAmount, money)}/mo` }),
+    ),
+    meter({
+      ratio: snapshot.progress,
+      status: snapshot.finished ? 'good' : 'accent',
+      ariaLabel: `${plan.description} progress`,
+    }),
+    h('p.installment-meta', {
+      text: snapshot.finished
+        ? `All ${plan.months} billed · finished ${monthLabel(snapshot.lastMonth, money.locale)}`
+        : `${snapshot.billed} of ${plan.months} billed · ${formatMoney(snapshot.remainingAmount, money)} left · ends ${monthLabel(snapshot.lastMonth, money.locale)}`,
+    }),
+    snapshot.interestCost != null && snapshot.interestCost > 0
+      ? h('p.installment-meta', {
+          text: `Costs ${formatMoney(snapshot.interestCost, money)} more than the ${formatMoney(plan.principal ?? 0, money)} price.`,
+        })
+      : null,
+  );
+}
 
 /**
  * The shared limit broken down by card.
@@ -198,6 +290,36 @@ function sharedLimitNote(
   );
 }
 
+/**
+ * What this card's instalment plans commit you to.
+ *
+ * The monthly figure is the one that matters to a budget: it is how much of
+ * next month's bill is already decided before any new spending happens.
+ */
+function installmentNote(
+  snap: CardSnapshot,
+  money: Required<Pick<MoneyOptions, 'currency' | 'locale'>>,
+  month: MonthKey,
+): HTMLElement | null {
+  const summary = installmentSummary(getState(), { cardId: snap.card.id, month });
+  if (!summary.activeCount) return null;
+  return h(
+    'div.shared-limit',
+    null,
+    h(
+      'p.shared-limit-head',
+      null,
+      icon('calendar', { size: 15 }),
+      h('span', {
+        text: `${formatMoney(summary.monthly, money)} a month in instalments`,
+      }),
+    ),
+    h('p.shared-limit-detail', {
+      text: `${summary.activeCount} plan${summary.activeCount === 1 ? '' : 's'} running · ${formatMoney(summary.remaining, money)} still to be billed.`,
+    }),
+  );
+}
+
 function fullCard(snap: CardSnapshot, money: Required<Pick<MoneyOptions, 'currency' | 'locale'>>, month: MonthKey): HTMLElement {
   const { card, band, cycle } = snap;
   const dueStatus = cycle.overdue
@@ -266,6 +388,7 @@ function fullCard(snap: CardSnapshot, money: Required<Pick<MoneyOptions, 'curren
       ariaLabel: `${card.name} utilisation`,
     }),
     snap.sharedLimit ? sharedLimitNote(snap, money) : null,
+    installmentNote(snap, money, month),
 
     /* The connection, stated plainly. */
     h(
@@ -460,6 +583,9 @@ export function cardDetailView(
 
   /* What the shared limit is doing, card by card. */
   if (snap.sharedLimit) append(root, sharedLimitPanel(snap, money));
+
+  /* Instalment plans. */
+  append(root, installmentPanel(card.id, money, month));
 
   /* Statement cycle explainer. */
   append(

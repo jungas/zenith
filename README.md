@@ -10,7 +10,7 @@ dependency.
 ```bash
 npm install
 npm start         # builds, then serves http://localhost:4173
-npm test          # type-checks, then runs 147 tests
+npm test          # type-checks, then runs 159 tests
 npm run typecheck # types only
 npm run build     # dist/*.js + sw.js, stamped with a shell version
 npm run icons     # regenerate the app icons
@@ -118,6 +118,25 @@ full keyboard navigation, and a focus-trapped dialog.
   **relabels** what you typed rather than converting it, because someone copying
   a figure off a statement means "this number is monthly", not "rewrite my
   number".
+
+- **Instalment plans** — ubiquitous in the Philippines: a ₱24,000 appliance
+  becomes `3/12` on the statement, the third of twelve monthly billings. What
+  the statement shows is the instalment; what you have committed to is the whole
+  remaining run of them, and that is the part a budget needs to see coming.
+
+  A tracked plan says what is still to be billed and when it stops — *4 of 12
+  billed · ₱33,332.80 left · ends March 2027* — and the card leads with the
+  figure a budget actually asks for: how much of next month's bill is already
+  decided. Progress is **derived from the calendar**, not stored, so nothing has
+  to be advanced by hand and nothing is wrong the month somebody forgets.
+
+  **Tracking a plan creates no transactions.** Each month's instalment already
+  reaches the ledger as an ordinary charge, typed in or imported; generating
+  them here would bill every purchase twice. A plan is a schedule of what is
+  still to come, not a second copy of what has happened.
+
+  Give it the purchase price and it will also say what the plan costs — a "0%"
+  plan that bills ₱26,400 for a ₱24,000 purchase is not 0%.
 
 - **Minimum payment** — `max(floor, rate × balance)`, never more than the balance.
 - **Payoff planner** — amortises at a chosen monthly payment and reports months,
@@ -328,6 +347,20 @@ runs the reconciliation identity against every one of these shapes.
 A payment with no source account chosen is **skipped rather than approximated**.
 The money came out of somewhere, and guessing where would unbalance that account.
 
+### Instalments are recognised
+
+A row reading `INSTALLMENT - APPLIANCE 3/12` says two things: ₱4,166.60 was
+billed this month, and it will be billed nine more times. The import offers to
+track the second half, deriving the term and the start month from the marker —
+the third of twelve on a June statement began in April — so a plan is
+recoverable from *any* statement, not only the one that started it.
+
+A bare `3/12` is only read as an instalment when the row says it is one.
+`PAYMENT 06/18` is a date, and it reads perfectly well as "the sixth of
+eighteen"; numbers alone cannot separate the two, and inventing a nine-month
+commitment out of a date is a worse failure than missing one. `3 of 12` is
+unambiguous and needs no such wording.
+
 ### It checks its own work
 
 A statement states what you owe. After an import, the card should agree with it
@@ -391,6 +424,7 @@ src/
     reminders.ts      which notifications a budget earns, and on what day
     actions.ts        state transitions (pure: state → state)
     seed.ts           deterministic sample data
+    installments.ts   monthly instalment plans: what is left, and when it stops
     statement.ts      reading a bank statement's lines into candidate rows
     statement-import.ts  those rows as transactions, deduped against the ledger
     pdf/              a dependency-free PDF reader — inflate, crypto, objects,

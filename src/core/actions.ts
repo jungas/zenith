@@ -5,11 +5,12 @@
 
 import {
   canJoinSharedLimit, ensurePaymentCategories, isCredit, makeAccount, makeCategory,
-  makeSharedLimit, makeTransaction, newId, paymentCategoryFor, sameBank, sharedLimitById,
+  makeInstallment, makeSharedLimit, makeTransaction, newId, paymentCategoryFor, sameBank,
+  sharedLimitById,
 } from './model.ts';
 import type {
-  Account, AccountDraft, AppState, Budgets, Category, Cents, ISODate, MonthKey, SharedLimit,
-  Transaction,
+  Account, AccountDraft, AppState, Budgets, Category, Cents, Installment, ISODate, MonthKey,
+  SharedLimit, Transaction,
 } from './model.ts';
 import { todayISO } from './dates.ts';
 
@@ -85,6 +86,8 @@ export function deleteAccount(state: AppState, accountId: string): AppState {
   return tidySharedLimits({
     ...state,
     accounts: state.accounts.filter((a) => a.id !== accountId),
+    // A plan bills a card that no longer exists; it goes with it.
+    installments: (state.installments ?? []).filter((plan) => plan.accountId !== accountId),
     categories,
     budgets: stripCategories(state.budgets, removedCategoryIds),
     transactions: transactions.map((t) =>
@@ -260,6 +263,43 @@ export function tidySharedLimits(state: AppState): AppState {
     return state;
   }
   return { ...state, accounts, sharedLimits: survivors };
+}
+
+/* ── Instalment plans ─────────────────────────────────────────────────── */
+
+/**
+ * Track a purchase being billed monthly.
+ *
+ * Only on a credit card, and only with a term and a monthly amount — a plan
+ * missing either cannot say what is still to come, which is the only reason it
+ * exists.
+ */
+export function addInstallment(state: AppState, patch: Partial<Installment>): AppState {
+  const card = state.accounts.find((a) => a.id === patch.accountId);
+  if (!isCredit(card)) return state;
+  const plan = makeInstallment(patch);
+  if (plan.months < 1 || plan.monthlyAmount <= 0 || !plan.startMonth) return state;
+  return { ...state, installments: [...(state.installments ?? []), plan] };
+}
+
+export function updateInstallment(
+  state: AppState,
+  installmentId: string,
+  patch: Partial<Installment>,
+): AppState {
+  return {
+    ...state,
+    installments: (state.installments ?? []).map((plan) =>
+      plan.id === installmentId ? { ...plan, ...patch, id: plan.id } : plan,
+    ),
+  };
+}
+
+export function deleteInstallment(state: AppState, installmentId: string): AppState {
+  return {
+    ...state,
+    installments: (state.installments ?? []).filter((plan) => plan.id !== installmentId),
+  };
 }
 
 /* ── Categories ───────────────────────────────────────────────────────── */
@@ -486,6 +526,7 @@ export function fromBackup(json: string | unknown): AppState {
   }
   if (!candidate.budgets || typeof candidate.budgets !== 'object') candidate.budgets = {};
   if (!Array.isArray(candidate.sharedLimits)) candidate.sharedLimits = [];
+  if (!Array.isArray(candidate.installments)) candidate.installments = [];
   delete candidate.exportedAt;
   return tidySharedLimits(ensurePaymentCategories(candidate as unknown as AppState));
 }

@@ -7,14 +7,14 @@ import { field, input, moneyInput, select, segmented, statusPill } from './compo
 import type { SelectGroup, SelectOption } from './components.ts';
 import { icon } from './icons.ts';
 import { parseMoney, centsToInput, formatMoney } from '../core/money.ts';
-import { todayISO } from '../core/dates.ts';
+import { addMonths, currentMonth, monthLabel, todayISO } from '../core/dates.ts';
 import {
   ACCOUNT_TYPES, CARD_ISSUERS, CATEGORY_COLORS, isCredit, isWallet, paymentCategoryFor,
   sameBank, sharedLimitFor, sharedLimitMembers, WALLET_PROVIDERS,
 } from '../core/model.ts';
 import type {
-  Account, AccountType, Category, Cents, CreditAccount, ISODate, MonthKey, SeriesColor,
-  Transaction, TxKind,
+  Account, AccountType, Category, Cents, CreditAccount, Installment, ISODate, MonthKey,
+  SeriesColor, Transaction, TxKind,
 } from '../core/model.ts';
 import { cardSnapshot, type CardSnapshot } from '../core/cards.ts';
 import { commit, getState, moneyOpts, undo } from '../store.ts';
@@ -1055,4 +1055,161 @@ export function openFundCardForm(cardId: string, { month }: { month: MonthKey })
       }),
     ],
   });
+}
+
+/* ── Instalment plan ──────────────────────────────────────────────────── */
+
+export interface InstallmentFormOptions {
+  cardId: string;
+  installment?: Installment | null;
+  /** Prefilled when the plan was read off a statement row. */
+  draft?: Partial<Installment>;
+}
+
+/**
+ * Add or edit an instalment plan.
+ *
+ * The form asks for the monthly billing and the term rather than the purchase
+ * price, because those are the two figures the statement actually shows — and
+ * they are what the budget needs. The price is optional, and only earns its
+ * place by revealing what a "0%" plan really costs.
+ */
+export function openInstallmentForm({
+  cardId, installment = null, draft = {},
+}: InstallmentFormOptions): void {
+  const state = getState();
+  const card = state.accounts.find((a) => a.id === cardId);
+  if (!isCredit(card)) return;
+  const existing = installment;
+
+  const start = installment?.startMonth ?? draft.startMonth ?? currentMonth();
+  const descriptionInput = input({
+    value: installment?.description ?? draft.description ?? '',
+    placeholder: 'Appliance — SM Megamall',
+    required: true,
+  });
+  const monthlyInput = moneyInput({
+    value: centsToInput(installment?.monthlyAmount ?? draft.monthlyAmount ?? 0),
+    required: true,
+  });
+  const monthsInput = h<HTMLInputElement>('input.input', {
+    type: 'number', min: '2', max: '60', step: '1',
+    value: String(installment?.months ?? draft.months ?? 12),
+  });
+  const startInput = h<HTMLInputElement>('input.input', { type: 'month', value: start });
+  const principalInput = moneyInput({
+    value: installment?.principal ? centsToInput(installment.principal) : '',
+    placeholder: 'Optional',
+  });
+
+  const summarySlot = h('div.hint-slot');
+  const renderSummary = (): void => {
+    const monthly = Math.abs(parseMoney(monthlyInput.value));
+    const months = Math.max(0, Number.parseInt(monthsInput.value, 10) || 0);
+    const principal = Math.abs(parseMoney(principalInput.value));
+    if (!monthly || !months) {
+      mount(summarySlot);
+      return;
+    }
+    const total = monthly * months;
+    const cost = principal ? total - principal : null;
+    mount(
+      summarySlot,
+      h(
+        'div.inline-note',
+        null,
+        icon('info', { size: 16 }),
+        h('p', {
+          text:
+            `${months} × ${formatMoney(monthly, money())} is ${formatMoney(total, money())} in total` +
+            (cost == null
+              ? ', ending ' + monthLabel(addMonths(startInput.value || start, months - 1), money().locale) + '.'
+              : cost > 0
+                ? `, which is ${formatMoney(cost, money())} more than the ${formatMoney(principal, money())} price — not 0%.`
+                : `, the same as the ${formatMoney(principal, money())} price. A genuine 0% plan.`),
+        }),
+      ),
+    );
+  };
+  for (const control of [monthlyInput, monthsInput, principalInput, startInput]) {
+    control.addEventListener('input', renderSummary);
+  }
+  renderSummary();
+
+  const errorSlot = h('div.form-error-slot');
+  const body = h(
+    'form.form',
+    { onsubmit: (event: Event) => event.preventDefault() },
+    field('What was bought', descriptionInput, { id: 'inst-what' }),
+    h(
+      'div.form-grid',
+      null,
+      field('Billed each month', monthlyInput, { id: 'inst-monthly' }),
+      field('Number of months', monthsInput, { id: 'inst-months' }),
+    ),
+    h(
+      'div.form-grid',
+      null,
+      field('First instalment', startInput, {
+        id: 'inst-start',
+        hint: 'The month the first one was billed.',
+      }),
+      field('Purchase price', principalInput, {
+        id: 'inst-principal',
+        hint: 'Optional — reveals what the plan costs.',
+      }),
+    ),
+    summarySlot,
+    h('div.inline-note', null, icon('info', { size: 16 }), h('p', {
+      text: 'Tracking a plan does not create any transactions. Each month\u2019s instalment still arrives as an ordinary charge — this is here so you can see what is still to come.',
+    })),
+    errorSlot,
+  );
+
+  const submit = h('button.btn.btn-primary', {
+    type: 'button',
+    text: existing ? 'Save changes' : 'Track plan',
+    onclick: () => {
+      const description = descriptionInput.value.trim();
+      const monthlyAmount = Math.abs(parseMoney(monthlyInput.value));
+      const months = Math.max(0, Number.parseInt(monthsInput.value, 10) || 0);
+      if (!description || !monthlyAmount || months < 2) {
+        mount(errorSlot, h('p.form-error', null, icon('alert', { size: 15 }), h('span', {
+          text: 'A plan needs a description, a monthly amount and at least two months.',
+        })));
+        return;
+      }
+      const patch: Partial<Installment> = {
+        accountId: cardId,
+        description,
+        monthlyAmount,
+        months,
+        startMonth: startInput.value || currentMonth(),
+        principal: Math.abs(parseMoney(principalInput.value)) || null,
+      };
+      if (existing) commit((s) => actions.updateInstallment(s, existing.id, patch), { label: 'edit plan' });
+      else commit((s) => actions.addInstallment(s, patch), { label: 'track plan' });
+      closeModal();
+      undoToast(existing ? 'Plan updated.' : 'Plan tracked.');
+    },
+  });
+
+  const footer: Child[] = [
+    existing
+      ? h('button.btn.btn-danger-ghost', {
+          type: 'button',
+          text: 'Stop tracking',
+          onclick: () => {
+            commit((s) => actions.deleteInstallment(s, existing.id), { label: 'delete plan' });
+            closeModal();
+            undoToast('Plan removed. The charges it billed are untouched.');
+          },
+        })
+      : null,
+    h('div.foot-spacer'),
+    h('button.btn', { type: 'button', text: 'Cancel', onclick: closeModal }),
+    submit,
+  ];
+
+  openModal({ title: existing ? 'Edit instalment plan' : `Instalment plan on ${card.name}`, body, footer });
 }

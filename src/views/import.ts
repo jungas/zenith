@@ -21,6 +21,7 @@ import { formatDate, todayISO } from '../core/dates.ts';
 import { isCredit } from '../core/model.ts';
 import { readPdfText, PdfPasswordError, PdfReadError, PdfUnsupportedEncryptionError, pdfIsEncrypted, looksLikePdf } from '../core/pdf/read.ts';
 import { parseStatement } from '../core/statement.ts';
+import { findMatchingPlan, planFromStatementRow } from '../core/installments.ts';
 import type { DateOrder, ParsedStatement } from '../core/statement.ts';
 import type { TextLine } from '../core/pdf/read.ts';
 import {
@@ -336,6 +337,7 @@ export function importView(): HTMLElement {
       stage,
       summaryCard(session, money),
       checkHost,
+      installmentOffer(session),
       h(
         'section.card.block',
         null,
@@ -402,6 +404,88 @@ export function importView(): HTMLElement {
 }
 
 /* ── Pieces ─────────────────────────────────────────────────────────── */
+
+/**
+ * Offer to track the instalment plans this statement mentions.
+ *
+ * A row reading `INSTALLMENT - APPLIANCE 3/12` says two things: ₱4,166.60 was
+ * billed this month, and it will be billed nine more times. The first is the
+ * transaction being imported; the second is invisible unless someone writes it
+ * down, and it is the half that lets you plan.
+ *
+ * The row itself still imports as an ordinary charge — the plan records what is
+ * still to come, and creates nothing.
+ */
+function installmentOffer(session: Session): HTMLElement | null {
+  const state = getState();
+  const accountId = session.accountId;
+  if (!isCredit(state.accounts.find((a) => a.id === accountId))) return null;
+
+  const candidates = session.drafts
+    .filter((draft) => draft.include && draft.amount < 0)
+    .map((draft) =>
+      planFromStatementRow(
+        { description: draft.payee, amount: Math.abs(draft.amount), date: draft.date },
+        accountId,
+      ),
+    )
+    .filter((plan): plan is NonNullable<typeof plan> => plan !== null)
+    .filter((plan) => !findMatchingPlan(state, plan));
+
+  if (!candidates.length) return null;
+
+  return h(
+    'section.card.block',
+    null,
+    h('h3.card-title', {
+      text: candidates.length === 1 ? 'One row is an instalment' : `${candidates.length} rows are instalments`,
+    }),
+    h('p.card-text', {
+      text: 'These look like monthly instalments of a larger purchase. Tracking them records what is still to be billed, so future months are not a surprise. The charges themselves import either way.',
+    }),
+    h(
+      'ul.mini-list',
+      { role: 'list' },
+      candidates.map((plan) =>
+        h(
+          'li.mini-row',
+          null,
+          h('span.mini-name', { text: plan.description }),
+          h('span.mini-meta', { text: `${plan.months} months from ${plan.startMonth}` }),
+        ),
+      ),
+    ),
+    h(
+      'div.button-row',
+      null,
+      h(
+        'button.btn',
+        {
+          type: 'button',
+          onclick: () => {
+            commit(
+              (current) =>
+                candidates.reduce(
+                  (next, plan) =>
+                    findMatchingPlan(next, plan) ? next : actions.addInstallment(next, plan),
+                  current,
+                ),
+              { label: 'track plans' },
+            );
+            toast(
+              `${candidates.length} instalment plan${candidates.length === 1 ? '' : 's'} tracked.`,
+              { tone: 'success', action: { label: 'Undo', onClick: () => undo() } },
+            );
+          },
+        },
+        icon('calendar', { size: 16 }),
+        h('span', {
+          text: candidates.length === 1 ? 'Track this plan' : `Track all ${candidates.length}`,
+        }),
+      ),
+    ),
+  );
+}
 
 /**
  * Does the result of this import match what the statement says is owed?
