@@ -10,7 +10,7 @@ dependency.
 ```bash
 npm install
 npm start         # builds, then serves http://localhost:4173
-npm test          # type-checks, then runs 178 tests
+npm test          # type-checks, then runs 180 tests
 npm run typecheck # types only
 npm run build     # dist/*.js + sw.js, stamped with a shell version
 npm run icons     # regenerate the app icons
@@ -698,6 +698,27 @@ of opening a pull request:
   `main`, and fails if the single-file bundle picks up an external reference.
 - `deploy.yml` — publishes to Pages from `main` only. It needs one manual step:
   repository **Settings → Pages → Source: GitHub Actions**.
+
+### Being told about an update
+
+A new deploy is useless if the app never mentions it. Registering the worker
+asks the browser to check once, at page load — and for a long time that was the
+*only* check, which meant a tab left open, or an installed app never closed, sat
+on an old version indefinitely. You had to reload to be told to reload.
+
+Zenith now looks again when it comes back to the foreground, and hourly while it
+stays there. When something is waiting it says so in three places, because a
+toast lasts seconds and the moment is easy to miss:
+
+- a toast, with **Reload** on it
+- an **Update** button in the header, which stays until it is used
+- a row in Settings → Install, which is where someone goes looking afterwards
+
+Settings also has **Check for updates** for the moment you know a change has
+shipped and would rather not wait for the next check.
+
+The check is a conditional request for Zenith's own `sw.js`. It sends nothing —
+there is still no account, no sync, and no data leaving the device.
 
 ### Cache busting
 
