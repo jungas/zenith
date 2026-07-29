@@ -1651,28 +1651,29 @@
 }
 
 .installment-name {
-  border: 0;
-  background: none;
-  padding: 0;
-  font: inherit;
   font-weight: 600;
-  color: var(--text-primary);
-  text-align: left;
-  cursor: pointer;
-  text-decoration: underline;
-  text-decoration-color: transparent;
-  text-underline-offset: 3px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
-.installment-name:hover,
-.installment-name:focus-visible {
-  text-decoration-color: currentColor;
+/*
+ * Always visible, never hover-only: on a touch screen a control that appears on
+ * hover is a control that does not exist.
+ *
+ * No `margin-left: auto` here — the amount already carries one, and two of them
+ * split the free space between them, stranding the amount mid-row.
+ */
+.installment-actions {
+  display: flex;
+  gap: 2px;
+  flex: none;
 }
 
 .installment-amount {
   font-variant-numeric: tabular-nums;
   font-weight: 600;
   white-space: nowrap;
+  margin-left: auto;
 }
 
 .installment-meta {

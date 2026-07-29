@@ -175,6 +175,11 @@ full keyboard navigation, and a focus-trapped dialog.
   Give it the purchase price and it will also say what the plan costs — a "0%"
   plan that bills ₱26,400 for a ₱24,000 purchase is not 0%.
 
+  Every plan carries **edit** and **stop tracking** buttons on its own row.
+  Removing one destroys nothing — the charges it billed are ordinary
+  transactions and stay exactly where they are — so it takes no confirmation
+  dialog, just `u` to undo like everything else.
+
 - **Minimum payment** — `max(floor, rate × balance)`, never more than the balance.
 - **Payoff planner** — amortises at a chosen monthly payment and reports months,
   total interest and what paying more than the minimum saves. A payment that
