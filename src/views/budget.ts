@@ -13,12 +13,14 @@ import { openCategoryForm, openMoveMoneyForm } from '../ui/forms.ts';
 import { formatMoney, parseMoney, centsToInput } from '../core/money.ts';
 import { addMonths, currentMonth, monthLabel } from '../core/dates.ts';
 import { categoryRow, monthSummary, suggestBudget } from '../core/budget.ts';
+import { billFunding } from '../core/bills.ts';
 import { categoryGroups } from '../core/model.ts';
 import { commit, getState, moneyOpts } from '../store.ts';
 import * as actions from '../core/actions.ts';
 import { navigate } from '../router.ts';
 import type { AppState, Category, Cents, MonthKey, MoneyOptions } from '../core/model.ts';
 import type { MonthSummary } from '../core/budget.ts';
+import type { BillFundingRow } from '../core/bills.ts';
 
 export function budgetView({ month = currentMonth() }: { month?: MonthKey } = {}): HTMLElement {
   const state = getState();
@@ -42,6 +44,13 @@ export function budgetView({ month = currentMonth() }: { month?: MonthKey } = {}
 
   const summary = monthSummary(state, month);
   const groups = categoryGroups(state);
+  // What each envelope owes to bills that have not been paid yet. An envelope
+  // with money in it is not funded if a fixed date is about to take more.
+  const billsDue = new Map(
+    billFunding(state, { month }).rows
+      .filter((row) => row.categoryId)
+      .map((row) => [row.categoryId as string, row]),
+  );
 
   /* Month switcher + Ready to assign. */
   const rta = summary.readyToAssign;
@@ -133,7 +142,9 @@ export function budgetView({ month = currentMonth() }: { month?: MonthKey } = {}
           h('span.col-num.col-activity', { role: 'columnheader', text: 'Activity' }),
           h('span.col-num.col-available', { role: 'columnheader', text: 'Available' }),
         ),
-        categories.map((category) => budgetRow(state, summary, category, month, money, isCards)),
+        categories.map((category) =>
+          budgetRow(state, summary, category, month, money, isCards, billsDue.get(category.id) ?? null),
+        ),
       ),
     );
     append(root, table);
@@ -190,6 +201,7 @@ function budgetRow(
   month: MonthKey,
   money: Required<Pick<MoneyOptions, 'currency' | 'locale'>>,
   isCards: boolean,
+  bills: BillFundingRow | null,
 ): HTMLElement {
   const row = categoryRow(summary, category.id);
   const available = row.available;
@@ -240,6 +252,21 @@ function budgetRow(
       ),
       row.rollover
         ? h('span.row-rollover', { text: `${formatMoney(row.rollover, { ...money, cents: false })} rolled over` })
+        : null,
+      // Said on the row that can do something about it, and only while it is
+      // still a problem: a covered bill needs no commentary.
+      bills && bills.due > 0
+        ? h(
+            'span',
+            { class: `row-bills-note${bills.uncovered > 0 ? ' is-short' : ''}` },
+            icon(bills.uncovered > 0 ? 'warn' : 'repeat', { size: 12 }),
+            h('span', {
+              text:
+                bills.uncovered > 0
+                  ? `${formatMoney(bills.due, { ...money, cents: false })} of bills due · ${formatMoney(bills.uncovered, { ...money, cents: false })} short`
+                  : `${formatMoney(bills.due, { ...money, cents: false })} of bills due · covered`,
+            }),
+          )
         : null,
       // Narrow screens drop the Reserved column and show it here instead, so
       // the card link stays visible without squeezing the name to three letters.

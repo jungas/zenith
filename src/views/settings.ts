@@ -441,7 +441,7 @@ function remindersSection(state: AppState): HTMLElement {
   append(
     section,
     h('p.card-text', {
-      text: 'Zenith can raise a system notification when a card payment is coming up. Reminders are worked out on this device from your own budget — nothing is sent to a server, and no account is involved.',
+      text: 'Zenith can raise a system notification when a card payment or a recurring bill is coming up. Reminders are worked out on this device from your own budget — nothing is sent to a server, and no account is involved.',
     }),
   );
 
@@ -513,6 +513,7 @@ function remindersSection(state: AppState): HTMLElement {
       'div.check-list.block',
       null,
       reminderToggle('Payments due and overdue', settings.payments, (payments) => setReminderSettings({ payments })),
+      reminderToggle('Recurring bills coming due', settings.bills, (bills) => setReminderSettings({ bills })),
       reminderToggle('Unfunded card debt', settings.unfunded, (unfunded) => setReminderSettings({ unfunded })),
       reminderToggle('The day a statement closes', settings.statements, (statements) =>
         setReminderSettings({ statements }),

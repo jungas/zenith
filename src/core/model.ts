@@ -209,6 +209,82 @@ export interface Installment {
 }
 
 /**
+ * How often a bill comes round.
+ *
+ * Every cadence a household actually has, and nothing else: an arbitrary "every
+ * N days" would let a bill drift off the calendar it is really tied to, and no
+ * utility bills on the 40th day.
+ */
+export type BillCadence = 'weekly' | 'fortnightly' | 'monthly' | 'quarterly' | 'semiannual' | 'annual';
+
+export const BILL_CADENCES = {
+  weekly: { label: 'Weekly', days: 7, months: 0, perYear: 52 },
+  fortnightly: { label: 'Every 2 weeks', days: 14, months: 0, perYear: 26 },
+  monthly: { label: 'Monthly', days: 0, months: 1, perYear: 12 },
+  quarterly: { label: 'Quarterly', days: 0, months: 3, perYear: 4 },
+  semiannual: { label: 'Every 6 months', days: 0, months: 6, perYear: 2 },
+  annual: { label: 'Yearly', days: 0, months: 12, perYear: 1 },
+} as const satisfies Record<
+  BillCadence,
+  { label: string; days: number; months: number; perYear: number }
+>;
+
+/**
+ * A bill that comes round again: rent, electricity, a subscription, insurance.
+ *
+ * A bill is a **schedule, not a ledger**. Tracking one creates no transactions —
+ * for the same reason an instalment plan creates none. What it stores is when
+ * the money is expected to leave and what it is expected to cost; whether a
+ * given month's bill was actually paid is read back out of the ledger, from a
+ * transaction tagged with this bill's id and the due date it settled.
+ *
+ * That direction matters. A schedule that generated its own transactions would
+ * claim money had moved when nobody paid anything, and would have to be
+ * corrected by hand every time the real payment differed. Deriving instead
+ * means a bill can be added years after the fact, edited freely, or deleted
+ * outright, and the account balances never move.
+ *
+ * The occurrences themselves are derived too: a cadence and an anchor date
+ * generate every due date forwards and backwards, so nothing has to be rolled
+ * over at the end of a month.
+ */
+export interface Bill {
+  id: string;
+  /** What it is: 'Electricity', 'Netflix'. */
+  name: string;
+  /** Who is paid, when that differs from the name. */
+  payee: string;
+  /**
+   * What it costs each time. For a `variable` bill this is the estimate to fall
+   * back on until there are real payments to average.
+   */
+  amount: Cents;
+  /** True when the figure moves month to month — a metered utility bill. */
+  variable: boolean;
+  cadence: BillCadence;
+  /**
+   * The anchor: one real due date. Every other occurrence is this one stepped
+   * by the cadence, so the day of the month (or the weekday) comes from here.
+   */
+  startDate: ISODate;
+  /** The last due date, when the commitment ends. */
+  endDate: ISODate | null;
+  /** The envelope it is budgeted to. */
+  categoryId: string | null;
+  /** Where it is normally paid from — an asset account, or the card it sits on. */
+  accountId: string | null;
+  /** Leaves automatically. Still needs funding; it just needs no action. */
+  autopay: boolean;
+  /**
+   * Occurrences deliberately not paid — a month skipped, a holiday from a gym
+   * membership. Recorded by due date so the rest of the schedule is untouched.
+   */
+  skipped: ISODate[];
+  archived: boolean;
+  note: string;
+}
+
+/**
  * Money borrowed and repaid in fixed monthly amounts.
  *
  * Unlike a card, a loan is not spent on: the principal arrives once and the
@@ -288,6 +364,17 @@ export interface Transaction {
   transferId: string | null;
   /** True on synthesised opening-balance rows, which are not editable. */
   system?: boolean;
+  /**
+   * The recurring bill this settles, when it settles one. Together with
+   * `billDue` it is the receipt that marks one occurrence paid — see `Bill`.
+   */
+  billId?: string | null;
+  /**
+   * Which occurrence was paid, by its due date. Stored rather than inferred
+   * from the transaction's own date: a bill paid three days early belongs to
+   * the occurrence it settles, not to whichever window the calendar puts it in.
+   */
+  billDue?: ISODate | null;
 }
 
 /** Assigned amounts: month -> category -> cents. */
@@ -309,6 +396,8 @@ export interface ReminderSettings {
   statements: boolean;
   /** Card debt with no cash set aside for it. */
   unfunded: boolean;
+  /** Recurring bills coming due, and ones that have gone past. */
+  bills: boolean;
 }
 
 export const REMINDER_DEFAULTS: ReminderSettings = {
@@ -317,6 +406,7 @@ export const REMINDER_DEFAULTS: ReminderSettings = {
   payments: true,
   statements: false,
   unfunded: true,
+  bills: true,
 };
 
 export interface Settings {
@@ -340,6 +430,8 @@ export interface AppState {
   sharedLimits: SharedLimit[];
   /** Purchases being billed in fixed monthly instalments. */
   installments: Installment[];
+  /** Recurring bills: when money is expected to leave, and for what. */
+  bills: Bill[];
 }
 
 /** Currency/locale pair threaded through every formatting call. */
@@ -450,6 +542,28 @@ export function makeInstallment(patch: Partial<Installment> = {}): Installment {
   };
 }
 
+export function makeBill(patch: Partial<Bill> = {}): Bill {
+  const { skipped, ...rest } = patch;
+  return {
+    id: newId('bill'),
+    name: 'New bill',
+    payee: '',
+    amount: 0,
+    variable: false,
+    cadence: 'monthly',
+    startDate: '',
+    endDate: null,
+    categoryId: null,
+    accountId: null,
+    autopay: false,
+    archived: false,
+    note: '',
+    ...rest,
+    // Copied rather than shared: a caller's array must not become the bill's.
+    skipped: [...(skipped ?? [])],
+  };
+}
+
 export function makeCategory(patch: Partial<Category> = {}): Category {
   return {
     id: newId('cat'),
@@ -498,6 +612,7 @@ export function emptyState(now: Date = new Date()): AppState {
     transactions: [],
     sharedLimits: [],
     installments: [],
+    bills: [],
   };
 }
 

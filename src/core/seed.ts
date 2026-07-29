@@ -5,8 +5,12 @@
  */
 
 import { addMonths, currentMonth, daysInMonth, todayISO } from './dates.ts';
-import { emptyState, ensurePaymentCategories, makeAccount, makeCategory, makeTransaction } from './model.ts';
-import type { AppState, Category, Cents, CreditAccount, SeriesColor, Transaction } from './model.ts';
+import {
+  emptyState, ensurePaymentCategories, makeAccount, makeBill, makeCategory, makeTransaction,
+} from './model.ts';
+import type {
+  AppState, Bill, Category, Cents, CreditAccount, SeriesColor, Transaction,
+} from './model.ts';
 import { monthSummary } from './budget.ts';
 
 /** One category's shape in the sample data, including how to fake its spending. */
@@ -50,6 +54,34 @@ const CATEGORIES: CategorySpec[] = [
   { name: 'Health & fitness', group: 'Lifestyle', color: 'series-3', budget: 9500, cadence: 2,  range: [1800, 6500],   cardBias: 0.6 },
   { name: 'Travel fund',    group: 'Goals',     color: 'series-4', budget: 25000,  cadence: 0,  range: [0, 0],         cardBias: 0 },
   { name: 'Emergency fund', group: 'Goals',     color: 'series-6', budget: 0,      cadence: 0,  range: [0, 0],         cardBias: 0 },
+];
+
+/**
+ * The recurring bills behind the fixed monthly categories above.
+ *
+ * Every one of them is backed by the charges the generator already produces, so
+ * the sample opens with a schedule whose history is real: past months read as
+ * paid because the payments are there, and this month's remaining dates are
+ * genuinely still to come.
+ */
+interface BillSpec {
+  /** The category it is budgeted to, by name. */
+  category: string;
+  payee: string;
+  amount: Cents;
+  day: number;
+  variable?: boolean;
+  autopay?: boolean;
+  /** 'checking' or the card it sits on. */
+  paidFrom: 'checking' | 'visa';
+}
+
+const BILLS: BillSpec[] = [
+  { category: 'Rent', payee: 'Harbourview Lettings', amount: 165_000, day: 1, paidFrom: 'checking' },
+  { category: 'Internet', payee: 'Fibrenet', amount: 7_900, day: 5, autopay: true, paidFrom: 'visa' },
+  { category: 'Utilities', payee: 'Municipal Power', amount: 14_500, day: 8, variable: true, paidFrom: 'checking' },
+  { category: 'Phone', payee: 'Kestrel Mobile', amount: 6_500, day: 14, autopay: true, paidFrom: 'visa' },
+  { category: 'Insurance', payee: 'Meridian Insurance', amount: 21_000, day: 20, paidFrom: 'checking' },
 ];
 
 const PAYEES: Record<string, string[]> = {
@@ -125,6 +157,24 @@ export function seedState(
   const monthKeys: string[] = [];
   for (let i = 0; i < months; i++) monthKeys.push(addMonths(firstMonth, i));
 
+  // Anchored to the first month generated, so every occurrence the schedule
+  // claims has already happened has a real charge behind it.
+  const bills: Bill[] = BILLS.map((spec) =>
+    makeBill({
+      name: spec.category,
+      payee: spec.payee,
+      amount: spec.amount,
+      variable: spec.variable ?? false,
+      cadence: 'monthly',
+      startDate: `${firstMonth}-${String(spec.day).padStart(2, '0')}`,
+      categoryId: category(spec.category).id,
+      accountId: spec.paidFrom === 'visa' ? visa.id : checking.id,
+      autopay: spec.autopay ?? false,
+    }),
+  );
+  state.bills = bills;
+  const billForCategory = new Map(bills.map((bill) => [bill.categoryId, bill]));
+
   const transactions: Transaction[] = [];
   const pick = (list: string[]): string => list[Math.floor(random() * list.length) % list.length] ?? '';
   const between = ([min, max]: [Cents, Cents]): Cents =>
@@ -163,14 +213,20 @@ export function seedState(
         // that cannot go negative in real life.
         const walletSized = spec.cadence >= 2 && !spec.fixed && spec.range[1] <= 20_000;
         const cashAccount = !useCard && walletSized && random() < 0.4 ? ewallet.id : checking.id;
+        const date = `${month}-${String(day).padStart(2, '0')}`;
+        // A charge that settles a tracked bill carries the receipt: the bill's
+        // id and the occurrence it paid. That tag is what makes the schedule's
+        // history read as paid rather than as months of missed dates.
+        const bill = billForCategory.get(target.id) ?? null;
         transactions.push(makeTransaction({
-          date: `${month}-${String(day).padStart(2, '0')}`,
+          date,
           accountId: useCard ? cardAccount.id : cashAccount,
           categoryId: target.id,
-          payee: pick(PAYEES[spec.name] ?? [spec.name]),
+          payee: bill ? bill.payee : pick(PAYEES[spec.name] ?? [spec.name]),
           amount: -between(spec.range),
           kind: 'expense',
           cleared: true,
+          ...(bill ? { billId: bill.id, billDue: date } : {}),
         }));
       }
     }

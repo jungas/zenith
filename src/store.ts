@@ -59,6 +59,7 @@ function migrate(parsed: Partial<AppState>): AppState {
     budgets: parsed.budgets && typeof parsed.budgets === 'object' ? parsed.budgets : {},
     sharedLimits: Array.isArray(parsed.sharedLimits) ? parsed.sharedLimits : [],
     installments: Array.isArray(parsed.installments) ? parsed.installments : [],
+    bills: Array.isArray(parsed.bills) ? parsed.bills : [],
   };
   return tidySharedLimits(ensurePaymentCategories(next));
 }

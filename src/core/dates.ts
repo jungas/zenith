@@ -45,6 +45,22 @@ export function addMonths(monthKey: MonthKey, delta: number): MonthKey {
   return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}`;
 }
 
+/**
+ * Shift a calendar date by whole months, clamping to the month's length.
+ *
+ * The 31st plus one month is the 28th of February, not the 3rd of March: a bill
+ * due on the last day of the month is due on the last day of the *next* one,
+ * and rolling over would quietly move it into the month after.
+ */
+export function addMonthsToDate(iso: ISODate, delta: number): ISODate {
+  const date = parseISO(iso);
+  const year = date.getFullYear();
+  const month = date.getMonth() + delta;
+  const last = new Date(year, month + 1, 0).getDate();
+  const shifted = new Date(year, month, Math.min(date.getDate(), last));
+  return toISO(shifted.getFullYear(), shifted.getMonth() + 1, shifted.getDate());
+}
+
 export function compareMonths(a: MonthKey, b: MonthKey): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }

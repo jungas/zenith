@@ -10,7 +10,7 @@ dependency.
 ```bash
 npm install
 npm start         # builds, then serves http://localhost:4173
-npm test          # type-checks, then runs 180 tests
+npm test          # type-checks, then runs 208 tests
 npm run typecheck # types only
 npm run build     # dist/*.js + sw.js, stamped with a shell version
 npm run icons     # regenerate the app icons
@@ -18,7 +18,8 @@ npm run build:artifact   # the whole app as one HTML file
 ```
 
 Open Settings → **Load sample data** for a worked example: four months of
-budgeting across two Philippine credit cards and a digital wallet.
+budgeting across two Philippine credit cards, a digital wallet and five
+recurring bills.
 
 ---
 
@@ -114,6 +115,7 @@ debt case that a naïve version of the identity gets wrong.)
 | **Budget** | Month-by-month envelope table with inline assigning, rollover, overspend flags, move-money, 3-month-average suggestions — and card payment envelopes in their own group with a **Reserved** column |
 | **Cards** | Per card: balance, utilisation band, available credit, statement balance, minimum payment, statement/due dates, funding coverage, interest cost — with limits shared across cards from one bank |
 | **Card detail** | Statement-cycle timeline, a plain-language walkthrough of the budget connection, and a payoff planner (amortisation, total interest, months saved vs paying the minimum) |
+| **Bills** | Every recurring commitment: what is still to leave this month, what each one works out to per month, which envelopes are short of the dates coming, and a one-click assign to close the gap |
 | **Ledger** | One searchable list across every account, filterable by account, category and month |
 | **Reports** | Income vs spending, spending by category, card debt over time, savings rate — 3/6/12-month ranges |
 | **Accounts** | Net worth, cash, debt, per-account balances — chequing, savings, cash, digital wallets, cards and loans |
@@ -224,10 +226,97 @@ it takes part in the same reconciliation identity as chequing and savings.
 
 ---
 
+## Bills that come round again
+
+Rent, electricity, the phone, the streaming subscription you forgot about: the
+part of a month that is decided before the month starts. Zenith tracks them as
+**schedules, not ledger entries**, and the distinction is the whole design.
+
+A bill stores one real due date and a cadence — weekly, fortnightly, monthly,
+quarterly, half-yearly, yearly. Every occurrence, past and future, is that
+anchor stepped by the cadence, so nothing is rolled over at the end of a month
+and a due date of the 31st lands on the 28th of February and goes *back* to the
+31st in March. The schedule starts at its anchor and never runs earlier: a bill
+entered with its next due date would otherwise sprout a history of dates nobody
+was ever billed for, every one of them reading as missed.
+
+### Paid is something the ledger says
+
+**Tracking a bill creates no transactions.** Nothing is marked paid on the bill
+itself either. An occurrence is settled when a transaction carries that bill's
+id *and the due date it settles*:
+
+```ts
+{ payee: 'Municipal Power', amount: -16_440, categoryId: 'cat_utilities',
+  billId: 'bill_x9…', billDue: '2026-07-08' }
+```
+
+Storing the due date rather than inferring it from the payment's own date is
+what lets a bill be paid three days early and still settle the occurrence it was
+meant for. And because the tag is the only record, deleting the payment un-pays
+the month, editing it re-prices the month, and untracking a bill entirely leaves
+the spending exactly where it was — real money that really moved, still in its
+category.
+
+The three rules that keep it honest fall out of that:
+
+1. **A schedule moves no money.** Adding a bill leaves every balance, envelope
+   and Ready-to-assign figure untouched.
+2. **A bill paid on a credit card is card spending.** It draws down its category
+   and reserves the same cash in that card's payment envelope, through exactly
+   the wiring above — `core/budget.ts` has no special case for bills.
+3. **An occurrence can be skipped.** Intent is the one thing the ledger cannot
+   hold, so a deliberately unpaid cycle is recorded on the bill by its due date.
+   Paying one that was marked skipped settles the argument and clears the mark.
+
+### Coverage, again
+
+Cards ask whether the budget covers the debt. Bills ask the same question about
+a date:
+
+> **$1,240 of this month's bills isn't funded** — Housing and Utilities do not
+> hold enough to meet what is still due.
+
+Bills sharing an envelope are added up first, because they share one envelope
+and will empty it in turn. **Assign what they need** tops the envelopes up
+soonest-due-first, and stops at what is genuinely unassigned — a budget that
+funds its bills by going over-assigned has not funded anything, it has moved the
+problem into next month. Whatever is left short stays visibly short.
+
+The budget table says the same thing on the row that can act on it: *"$1,650 of
+bills due · $410 short"* under the envelope's name.
+
+### Variable bills forecast themselves
+
+A metered utility bill is not what the figure you typed in last winter says it
+is, so a bill marked **varies** is forecast from the average of its last three
+actual payments, falling back to the stated amount until there is history. The
+forecast is labelled an estimate everywhere it appears — `~$128.44`, *"about
+$128.44"* — because a number presented as certain and then wrong costs more
+credibility than it saves.
+
+Whatever the cadence, every bill also reports a **monthly equivalent** (a yearly
+$300 insurance is $25 a month), which is what makes "your standing commitment is
+$2,132 a month" a figure you can compare against income.
+
+### Recognising one
+
+Zenith will point at payees you already pay on a rhythm — *"You have paid these
+on a regular rhythm"* — with the cadence, amount and category filled in. The
+detection is deliberately strict: monthly at the shortest, every gap within a
+fifth of the median, and stable amounts before it will guess anything longer
+than monthly. Three visits to the same restaurant average out to an interval
+too; what they do not do is repeat it within a few days each time. Suggestions
+are **offered, never created** — the figures are handed to the form and a person
+decides.
+
+---
+
 ## Reminders
 
 A bill you meant to pay is the most expensive thing an offline budget can miss,
-so Zenith raises **system notifications** before a card payment is due.
+so Zenith raises **system notifications** before a card payment or a recurring
+bill is due.
 
 They are real notifications — the same surface a messaging app uses — but they
 are **not push notifications**, and the distinction is the whole design. Push
@@ -259,7 +348,14 @@ possible with nothing but a set of ids to remember — the id *is* the receipt.
 | Payment due | `leadDays` before the due date, and again on the day | on |
 | Overdue | the day after the due date, repeating | on |
 | Unfunded debt | the day the statement closes, while coverage is short | on |
+| Bill due | `leadDays` before a recurring bill's due date, and again on the day | on |
+| Bill past due | the day after, repeating, until it is paid or skipped | on |
 | Statement closing | the day the statement closes | off |
+
+A bill reminder is only ever about the occurrence actually outstanding, so
+paying one — or skipping it — silences it with no state kept anywhere. A bill
+marked **automatic** is still announced (the money has to be there) but never
+interrupts: nothing is being asked of you.
 
 Two windows keep them honest. A reminder may be delivered up to **two days
 late** — a phone that was off should still say "your bill is due" the next
@@ -476,6 +572,7 @@ src/
     dates.ts          'YYYY-MM-DD' / 'YYYY-MM' calendar maths
     budget.ts         the engine: rollover, activity, reserves, reconcile
     cards.ts          balances, cycles, minimums, coverage, payoff
+    bills.ts          recurring schedules, what has been paid, what is unfunded
     reminders.ts      which notifications a budget earns, and on what day
     actions.ts        state transitions (pure: state → state)
     seed.ts           deterministic sample data
