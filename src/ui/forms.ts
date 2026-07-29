@@ -7,15 +7,17 @@ import { field, input, moneyInput, select, segmented, statusPill } from './compo
 import type { SelectGroup, SelectOption } from './components.ts';
 import { icon } from './icons.ts';
 import { parseMoney, centsToInput, formatMoney } from '../core/money.ts';
-import { addMonths, currentMonth, monthLabel, todayISO } from '../core/dates.ts';
+import { addMonths, currentMonth, formatDate, monthLabel, monthOf, todayISO } from '../core/dates.ts';
 import {
-  ACCOUNT_TYPES, CARD_ISSUERS, CATEGORY_COLORS, isCredit, isLoan, isWallet, LOAN_KINDS,
-  paymentCategoryFor, sameBank, sharedLimitFor, sharedLimitMembers, WALLET_PROVIDERS,
+  ACCOUNT_TYPES, BILL_CADENCES, CARD_ISSUERS, CATEGORY_COLORS, isCredit, isLoan, isWallet,
+  LOAN_KINDS, paymentCategoryFor, sameBank, sharedLimitFor, sharedLimitMembers, WALLET_PROVIDERS,
 } from '../core/model.ts';
 import type {
-  Account, AccountType, Category, Cents, CreditAccount, Installment, ISODate, MonthKey,
-  SeriesColor, Transaction, TxKind,
+  Account, AccountType, Bill, BillCadence, Category, Cents, CreditAccount, Installment, ISODate,
+  MonthKey, SeriesColor, Transaction, TxKind,
 } from '../core/model.ts';
+import { billById, billSnapshot } from '../core/bills.ts';
+import { categoryRow, monthSummary } from '../core/budget.ts';
 import { cardSnapshot, type CardSnapshot } from '../core/cards.ts';
 import { commit, getState, moneyOpts, undo } from '../store.ts';
 import * as actions from '../core/actions.ts';
@@ -1291,4 +1293,330 @@ export function openInstallmentForm({
   ];
 
   openModal({ title: existing ? 'Edit instalment plan' : `Instalment plan on ${card.name}`, body, footer });
+}
+
+/* ── Recurring bills ──────────────────────────────────────────────────── */
+
+export interface BillFormOptions {
+  bill?: Bill | null;
+  /** Prefilled when the bill was guessed from repeated payments. */
+  draft?: Partial<Bill>;
+}
+
+/**
+ * Add or edit a recurring bill.
+ *
+ * The form asks for one real due date rather than "which day of the month",
+ * because that is the only anchor that works for every cadence: a fortnightly
+ * bill has no day of the month, and a quarterly one has three. Everything else
+ * — every past and future occurrence — is derived from it.
+ */
+export function openBillForm({ bill = null, draft = {} }: BillFormOptions = {}): void {
+  const state = getState();
+  const existing = bill;
+
+  const nameInput = input({
+    value: bill?.name ?? draft.name ?? '',
+    placeholder: 'Electricity',
+    required: true,
+  });
+  const payeeInput = input({
+    value: bill?.payee ?? draft.payee ?? '',
+    placeholder: 'Who it is paid to — optional',
+    autocomplete: 'off',
+  });
+  const amountInput = moneyInput({
+    value: centsToInput(bill?.amount ?? draft.amount ?? 0),
+    required: true,
+  });
+  const variableInput = h<HTMLInputElement>('input', {
+    type: 'checkbox',
+    class: 'checkbox',
+    checked: bill?.variable ?? draft.variable ?? false,
+  });
+  const cadenceSelect = select(
+    Object.entries(BILL_CADENCES).map(([value, spec]) => ({
+      value,
+      label: spec.label,
+      selected: value === (bill?.cadence ?? draft.cadence ?? 'monthly'),
+    })),
+  );
+  const startInput = h<HTMLInputElement>('input.input', {
+    type: 'date',
+    value: bill?.startDate ?? draft.startDate ?? todayISO(),
+    required: true,
+  });
+  const endInput = h<HTMLInputElement>('input.input', {
+    type: 'date',
+    value: bill?.endDate ?? draft.endDate ?? '',
+  });
+  const categorySelect = select([
+    { value: '', label: 'No envelope' },
+    ...categoryOptions(state, { selected: bill?.categoryId ?? draft.categoryId ?? null }),
+  ]);
+  const accountSelect = select([
+    { value: '', label: 'Ask each time' },
+    ...accountOptions(state, { selected: bill?.accountId ?? draft.accountId ?? undefined }),
+  ]);
+  const autopayInput = h<HTMLInputElement>('input', {
+    type: 'checkbox',
+    class: 'checkbox',
+    checked: bill?.autopay ?? draft.autopay ?? false,
+  });
+  const noteInput = input({ value: bill?.note ?? '', placeholder: 'Optional note' });
+
+  const summarySlot = h('div.hint-slot');
+  const renderSummary = (): void => {
+    const amount = Math.abs(parseMoney(amountInput.value));
+    const cadence = cadenceSelect.value as BillCadence;
+    const spec = BILL_CADENCES[cadence] ?? BILL_CADENCES.monthly;
+    if (!amount || !startInput.value) {
+      mount(summarySlot);
+      return;
+    }
+    const perMonth = Math.round((amount * spec.perYear) / 12);
+    const next = formatDate(startInput.value, money().locale);
+    mount(
+      summarySlot,
+      h(
+        'div.inline-note',
+        null,
+        icon('repeat', { size: 16 }),
+        h('p', {
+          text:
+            `${formatMoney(amount, money())} ${spec.label.toLowerCase()}, from ${next}` +
+            (cadence === 'monthly'
+              ? '.'
+              : ` — ${formatMoney(perMonth, money())} a month set aside.`) +
+            (variableInput.checked
+              ? ' Zenith will forecast from what you actually pay.'
+              : ''),
+        }),
+      ),
+    );
+  };
+  for (const control of [amountInput, cadenceSelect, startInput, variableInput]) {
+    control.addEventListener('change', renderSummary);
+    control.addEventListener('input', renderSummary);
+  }
+  renderSummary();
+
+  const errorSlot = h('div.form-error-slot');
+  const body = h(
+    'form.form',
+    { onsubmit: (event: Event) => event.preventDefault() },
+    h('div.form-grid', null, field('Bill', nameInput, { id: 'bill-name' }), field('Paid to', payeeInput, { id: 'bill-payee' })),
+    h(
+      'div.form-grid',
+      null,
+      field('Amount', amountInput, { id: 'bill-amount', hint: 'What it usually costs' }),
+      field('How often', cadenceSelect, { id: 'bill-cadence' }),
+    ),
+    h('label.check-row', null, variableInput, h('span', { text: 'The amount varies — forecast it from what I pay' })),
+    h(
+      'div.form-grid',
+      null,
+      field('Next due', startInput, { id: 'bill-start', hint: 'Any real due date; the rest follow from it.' }),
+      field('Ends', endInput, { id: 'bill-end', hint: 'Optional — for a fixed-term commitment.' }),
+    ),
+    h(
+      'div.form-grid',
+      null,
+      field('Budgeted to', categorySelect, { id: 'bill-category' }),
+      field('Paid from', accountSelect, { id: 'bill-account' }),
+    ),
+    h('label.check-row', null, autopayInput, h('span', { text: 'Pays automatically — remind me, but do not ask me to pay it' })),
+    field('Note', noteInput, { id: 'bill-note' }),
+    summarySlot,
+    h('div.inline-note', null, icon('info', { size: 16 }), h('p', {
+      text: 'Tracking a bill records no transactions. It says when money is expected to leave; a bill counts as paid once you record the payment against it.',
+    })),
+    errorSlot,
+  );
+
+  const submit = h('button.btn.btn-primary', {
+    type: 'button',
+    text: existing ? 'Save changes' : 'Track bill',
+    onclick: () => {
+      const name = nameInput.value.trim();
+      const amount = Math.abs(parseMoney(amountInput.value));
+      const startDate = startInput.value;
+      if (!name || !startDate) {
+        mount(errorSlot, h('p.form-error', null, icon('alert', { size: 15 }), h('span', {
+          text: 'A bill needs a name and a due date to count from.',
+        })));
+        return;
+      }
+      const endDate = endInput.value || null;
+      if (endDate && endDate < startDate) {
+        mount(errorSlot, h('p.form-error', null, icon('alert', { size: 15 }), h('span', {
+          text: 'The end date falls before the first due date.',
+        })));
+        return;
+      }
+      const patch: Partial<Bill> = {
+        name,
+        payee: payeeInput.value.trim(),
+        amount,
+        variable: variableInput.checked,
+        cadence: cadenceSelect.value as BillCadence,
+        startDate,
+        endDate,
+        categoryId: categorySelect.value || null,
+        accountId: accountSelect.value || null,
+        autopay: autopayInput.checked,
+        note: noteInput.value.trim(),
+      };
+      if (existing) commit((s) => actions.updateBill(s, existing.id, patch), { label: 'edit bill' });
+      else commit((s) => actions.addBill(s, patch), { label: 'track bill' });
+      closeModal();
+      undoToast(existing ? 'Bill updated.' : `${name} is now tracked.`);
+    },
+  });
+
+  const footer: Child[] = [
+    existing
+      ? h('button.btn.btn-danger-ghost', {
+          type: 'button',
+          text: 'Stop tracking',
+          onclick: async () => {
+            const ok = await confirmDialog({
+              title: `Stop tracking ${existing.name}?`,
+              message: 'The payments you have recorded stay in the ledger — only the schedule goes.',
+              confirmLabel: 'Stop tracking',
+              danger: true,
+            });
+            if (!ok) return;
+            commit((s) => actions.deleteBill(s, existing.id), { label: 'delete bill' });
+            closeModal();
+            undoToast('Bill removed. Its payments are untouched.');
+          },
+        })
+      : null,
+    h('div.foot-spacer'),
+    h('button.btn', { type: 'button', text: 'Cancel', onclick: closeModal }),
+    submit,
+  ];
+
+  openModal({ title: existing ? `Edit ${existing.name}` : 'Track a bill', body, footer });
+}
+
+/**
+ * Record one occurrence of a bill as paid.
+ *
+ * The amount is the bill's expectation, not a fact, so it is offered and left
+ * editable — a metered bill is never what the estimate said. What the dialog
+ * insists on is which occurrence is being settled, because that is what turns
+ * an ordinary expense into a receipt for this month's electricity.
+ */
+export function openPayBillForm(billId: string, dueDate: string): void {
+  const state = getState();
+  const bill = billById(state, billId);
+  if (!bill) return;
+  const snapshot = billSnapshot(state, bill);
+  const expected = snapshot.thisMonth.find((entry) => entry.dueDate === dueDate)?.amount
+    ?? snapshot.expected;
+
+  if (!state.accounts.filter((a) => !a.archived).length) {
+    toast('Add an account to pay from first.', { tone: 'warning' });
+    return openAccountForm();
+  }
+
+  const amountInput = moneyInput({ value: centsToInput(expected), required: true });
+  const dateInput = h<HTMLInputElement>('input.input', { type: 'date', value: todayISO(), required: true });
+  const fromSelect = select(
+    accountOptions(state, { selected: bill.accountId ?? undefined }),
+  );
+  const memoInput = input({ placeholder: 'Optional note' });
+  const clearedInput = h<HTMLInputElement>('input', { type: 'checkbox', class: 'checkbox', checked: true });
+  const errorSlot = h('div.form-error-slot');
+
+  // Whether the envelope can actually take this hit, said before the money
+  // moves rather than after — an overspent envelope is much easier to prevent.
+  const available = bill.categoryId
+    ? categoryRow(monthSummary(state, monthOf(dueDate)), bill.categoryId).available
+    : 0;
+  const category = state.categories.find((c) => c.id === bill.categoryId) ?? null;
+
+  const body = h(
+    'form.form',
+    { onsubmit: (event: Event) => event.preventDefault() },
+    h(
+      'div.pay-summary',
+      null,
+      h('div.pay-row', null, h('span', { text: 'Due' }), h('strong', { text: formatDate(dueDate, money().locale) })),
+      h(
+        'div.pay-row',
+        null,
+        h('span', { text: bill.variable ? 'Usually' : 'Amount' }),
+        h('strong', { text: formatMoney(expected, money()) }),
+      ),
+      category
+        ? h(
+            'div.pay-row',
+            null,
+            h('span', { text: `${category.name} envelope` }),
+            available >= expected
+              ? statusPill('good', `${formatMoney(available, money())} available`, { size: 'sm' })
+              : statusPill('warning', `${formatMoney(available, money())} available`, { size: 'sm' }),
+          )
+        : null,
+    ),
+    h('div.form-grid', null, field('Amount paid', amountInput, { id: 'billpay-amount' }), field('Date paid', dateInput, { id: 'billpay-date' })),
+    field('Paid from', fromSelect, { id: 'billpay-from' }),
+    field('Memo', memoInput, { id: 'billpay-memo' }),
+    h('label.check-row', null, clearedInput, h('span', { text: 'Cleared — this has settled at the bank' })),
+    errorSlot,
+  );
+
+  const submit = h('button.btn.btn-primary', {
+    type: 'button',
+    text: 'Record payment',
+    onclick: () => {
+      const amount = Math.abs(parseMoney(amountInput.value));
+      if (!amount) {
+        mount(errorSlot, h('p.form-error', null, icon('alert', { size: 15 }), h('span', { text: 'Enter an amount.' })));
+        return;
+      }
+      if (!fromSelect.value) {
+        mount(errorSlot, h('p.form-error', null, icon('alert', { size: 15 }), h('span', { text: 'Pick an account to pay from.' })));
+        return;
+      }
+      commit(
+        (s) =>
+          actions.payBill(s, {
+            billId: bill.id,
+            dueDate,
+            date: dateInput.value || todayISO(),
+            amount,
+            accountId: fromSelect.value,
+            memo: memoInput.value.trim(),
+            cleared: clearedInput.checked,
+          }),
+        { label: 'bill payment' },
+      );
+      closeModal();
+      undoToast(`${bill.name} paid — ${formatMoney(amount, money())}.`);
+    },
+  });
+
+  openModal({
+    title: `Pay ${bill.name}`,
+    body,
+    footer: [
+      h('button.btn.btn-ghost', {
+        type: 'button',
+        text: 'Skip this one',
+        title: 'Nothing is owed this time',
+        onclick: () => {
+          commit((s) => actions.skipBillOccurrence(s, bill.id, dueDate), { label: 'skip bill' });
+          closeModal();
+          undoToast(`${bill.name} skipped for this cycle.`);
+        },
+      }),
+      h('div.foot-spacer'),
+      h('button.btn', { type: 'button', text: 'Cancel', onclick: closeModal }),
+      submit,
+    ],
+  });
 }

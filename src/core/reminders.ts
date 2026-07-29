@@ -12,14 +12,18 @@
  * receipt.
  */
 
+import { billSnapshots } from './bills.ts';
 import { cardSnapshots } from './cards.ts';
 import { addDays, daysBetween, formatDate, monthOf, todayISO } from './dates.ts';
 import { formatMoney } from './money.ts';
 import { REMINDER_DEFAULTS } from './model.ts';
 import type { AppState, ISODate, MoneyOptions, ReminderSettings } from './model.ts';
+import type { BillSnapshot } from './bills.ts';
 import type { CardSnapshot } from './cards.ts';
 
-export type ReminderKind = 'due-soon' | 'due-today' | 'overdue' | 'statement' | 'unfunded';
+export type ReminderKind =
+  | 'due-soon' | 'due-today' | 'overdue' | 'statement' | 'unfunded'
+  | 'bill-due-soon' | 'bill-due-today' | 'bill-overdue';
 
 export interface Reminder {
   /**
@@ -28,8 +32,13 @@ export interface Reminder {
    */
   id: string;
   kind: ReminderKind;
-  cardId: string;
-  cardName: string;
+  /**
+   * What the reminder is about: a card, or a recurring bill. Named for the
+   * subject rather than the card because both kinds of due date reach a person
+   * the same way, and only the words differ.
+   */
+  subjectId: string;
+  subjectName: string;
   /** The calendar day it should be delivered on. */
   fireOn: ISODate;
   title: string;
@@ -108,6 +117,12 @@ export function plannedReminders(
     out.push(...cardReminders(snap, settings, money, locale));
   }
 
+  if (settings.bills) {
+    for (const snap of billSnapshots(state, { asOf, month: monthOf(asOf) })) {
+      out.push(...billReminders(snap, settings, money, locale));
+    }
+  }
+
   return out
     .filter((reminder) => daysBetween(asOf, reminder.fireOn) <= horizonDays)
     .sort((a, b) => (a.fireOn < b.fireOn ? -1 : a.fireOn > b.fireOn ? 1 : a.id.localeCompare(b.id)));
@@ -138,8 +153,8 @@ function cardReminders(
       out.push({
         id: `overdue:${card.id}:${cycle.dueDate}:${repeat}`,
         kind: 'overdue',
-        cardId: card.id,
-        cardName: card.name,
+        subjectId: card.id,
+        subjectName: card.name,
         fireOn: addDays(cycle.dueDate, 1 + repeat * OVERDUE_REPEAT_DAYS),
         title: `${card.name} payment is overdue`,
         body: `It was due ${dueLabel}. ${amounts}`,
@@ -152,8 +167,8 @@ function cardReminders(
       out.push({
         id: `due-soon:${card.id}:${cycle.dueDate}`,
         kind: 'due-soon',
-        cardId: card.id,
-        cardName: card.name,
+        subjectId: card.id,
+        subjectName: card.name,
         fireOn: addDays(cycle.dueDate, -settings.leadDays),
         title: `${card.name} payment due ${dueLabel}`,
         body: `${amounts} ${coverage}`,
@@ -164,8 +179,8 @@ function cardReminders(
     out.push({
       id: `due-today:${card.id}:${cycle.dueDate}`,
       kind: 'due-today',
-      cardId: card.id,
-      cardName: card.name,
+      subjectId: card.id,
+      subjectName: card.name,
       fireOn: cycle.dueDate,
       title: `${card.name} payment due today`,
       body: `${amounts} ${coverage}`,
@@ -178,8 +193,8 @@ function cardReminders(
     out.push({
       id: `statement:${card.id}:${cycle.nextClose}`,
       kind: 'statement',
-      cardId: card.id,
-      cardName: card.name,
+      subjectId: card.id,
+      subjectName: card.name,
       fireOn: cycle.nextClose,
       title: `${card.name} statement closes today`,
       body: `Anything charged after today lands on the next statement. ${formatMoney(snap.balance, money)} owed so far.`,
@@ -194,8 +209,8 @@ function cardReminders(
     out.push({
       id: `unfunded:${card.id}:${cycle.nextClose}`,
       kind: 'unfunded',
-      cardId: card.id,
-      cardName: card.name,
+      subjectId: card.id,
+      subjectName: card.name,
       fireOn: cycle.nextClose,
       title: `${formatMoney(snap.uncovered, money)} of ${card.name} is not funded`,
       body: `Its statement closes today and that part of the balance has no cash set aside — it is what will accrue interest. Assign money to its payment envelope to cover it.`,
@@ -203,6 +218,80 @@ function cardReminders(
       urgent: false,
     });
   }
+
+  return out;
+}
+
+/**
+ * What to say about a recurring bill.
+ *
+ * Only ever about the occurrence that is actually outstanding — a bill already
+ * paid, or deliberately skipped, has nothing due and so says nothing. That is
+ * what makes paying a bill silence its reminder without any state being kept.
+ */
+function billReminders(
+  snap: BillSnapshot,
+  settings: ReminderSettings,
+  money: MoneyOptions,
+  locale: string,
+): Reminder[] {
+  const { bill, next } = snap;
+  if (!next) return [];
+
+  const out: Reminder[] = [];
+  const route = '#/bills';
+  const dueLabel = formatDate(next.dueDate, locale, { weekday: 'short', month: 'short', day: 'numeric' });
+  const amount = formatMoney(next.amount, money);
+  // An estimate is called an estimate: a metered bill will not arrive at the
+  // figure the app is predicting, and saying otherwise erodes the rest.
+  const amountLabel = bill.variable ? `about ${amount}` : amount;
+  const autopay = bill.autopay
+    ? 'It leaves automatically — this is about having the money there.'
+    : '';
+
+  if (next.status === 'overdue') {
+    for (let repeat = 0; repeat < OVERDUE_REPEATS; repeat++) {
+      out.push({
+        id: `bill-overdue:${bill.id}:${next.dueDate}:${repeat}`,
+        kind: 'bill-overdue',
+        subjectId: bill.id,
+        subjectName: bill.name,
+        fireOn: addDays(next.dueDate, 1 + repeat * OVERDUE_REPEAT_DAYS),
+        title: `${bill.name} is past due`,
+        body: `${amountLabel} was due ${dueLabel}.`,
+        route,
+        urgent: true,
+      });
+    }
+    return out;
+  }
+
+  if (settings.leadDays > 0) {
+    out.push({
+      id: `bill-due-soon:${bill.id}:${next.dueDate}`,
+      kind: 'bill-due-soon',
+      subjectId: bill.id,
+      subjectName: bill.name,
+      fireOn: addDays(next.dueDate, -settings.leadDays),
+      title: `${bill.name} due ${dueLabel}`,
+      body: `${amountLabel}. ${autopay}`.trim(),
+      route,
+      urgent: false,
+    });
+  }
+
+  out.push({
+    id: `bill-due-today:${bill.id}:${next.dueDate}`,
+    kind: 'bill-due-today',
+    subjectId: bill.id,
+    subjectName: bill.name,
+    fireOn: next.dueDate,
+    title: `${bill.name} due today`,
+    body: `${amountLabel}. ${autopay}`.trim(),
+    route,
+    // An automatic payment needs nothing done to it, so it does not interrupt.
+    urgent: !bill.autopay,
+  });
 
   return out;
 }

@@ -262,5 +262,5 @@ test('two cards each get their own reminders', () => {
 
   const due = dueReminders(twoCards, { asOf: '2026-02-09' });
   assert.equal(due.length, 2);
-  assert.equal(new Set(due.map((r) => r.cardId)).size, 2, 'one per card, not one for both');
+  assert.equal(new Set(due.map((r) => r.subjectId)).size, 2, 'one per card, not one for both');
 });

@@ -4,7 +4,9 @@ import { h, append } from './../ui/dom.ts';
 import { icon } from '../ui/icons.ts';
 import { statTile, statusPill, sectionHeader, emptyState } from '../ui/components.ts';
 import { meter, categoryBars } from '../ui/charts.ts';
-import { openTransactionForm, openPaymentForm, openFundCardForm, openAccountForm } from '../ui/forms.ts';
+import {
+  openTransactionForm, openPaymentForm, openFundCardForm, openAccountForm, openPayBillForm,
+} from '../ui/forms.ts';
 import { formatMoney } from '../core/money.ts';
 import {
   addMonths, currentMonth, formatDateShort, monthLabel, relativeDays,
@@ -13,6 +15,7 @@ import {
   cashOnHand, monthSummary, categoryRow, queryTransactions, spendingByCategory,
 } from '../core/budget.ts';
 import { debtSummary, upcomingPayments } from '../core/cards.ts';
+import { billFunding, upcomingBills } from '../core/bills.ts';
 import { upcomingLoanPayments } from '../core/loans.ts';
 import { getState, moneyOpts } from '../store.ts';
 import { enableReminders, notificationPermission, notificationsSupported, remindersOn } from '../reminders.ts';
@@ -154,7 +157,11 @@ export function dashboardView({ month = currentMonth() }: { month?: MonthKey } =
   // A loan payment is due just as a card payment is, and missing one costs
   // more, so both belong in the same list.
   const loansDue = upcomingLoanPayments(state, { days: 30 });
-  if (due.length || loansDue.length) {
+  // A recurring bill is the third kind of thing with a date on it. Keeping the
+  // three in one list is the point: what leaves this month leaves from one
+  // pocket, whether it is a card, a loan or the electricity.
+  const billsDue = upcomingBills(state, { days: 30, month });
+  if (due.length || loansDue.length || billsDue.length) {
     append(
       root,
       h(
@@ -239,7 +246,70 @@ export function dashboardView({ month = currentMonth() }: { month?: MonthKey } =
               }),
             );
           }),
+          billsDue.map((snap) => {
+            const next = snap.next;
+            if (!next) return null;
+            const days = next.daysUntilDue;
+            const status = next.status === 'overdue' ? 'critical' : days <= 3 ? 'serious' : days <= 7 ? 'warning' : 'neutral';
+            return h(
+              'li.due-row',
+              null,
+              h('div.due-icon', null, icon('repeat', { size: 18 })),
+              h(
+                'div.due-main',
+                null,
+                h('p.due-name', { text: snap.bill.name }),
+                h('p.due-meta', {
+                  text: `${formatDateShort(next.dueDate, money.locale)} · ${relativeDays(days)}`,
+                }),
+              ),
+              h(
+                'div.due-figures',
+                null,
+                h('p.due-amount', { text: formatMoney(next.amount, money) }),
+                h('p.due-min', { text: snap.bill.variable ? 'estimated' : 'recurring' }),
+              ),
+              h(
+                'div.due-status',
+                null,
+                statusPill(
+                  snap.bill.autopay ? 'neutral' : status,
+                  snap.bill.autopay ? 'Automatic' : next.status === 'overdue' ? 'Past due' : relativeDays(days),
+                  { size: 'sm' },
+                ),
+              ),
+              h('button.btn.btn-sm.btn-primary', {
+                type: 'button',
+                text: snap.bill.autopay ? 'Record' : 'Pay',
+                onclick: () => openPayBillForm(snap.bill.id, next.dueDate),
+              }),
+            );
+          }),
         ),
+      ),
+    );
+  }
+
+  /* Bills with no money behind them — the same nudge cards get, for dates. */
+  const billGap = billFunding(state, { month });
+  if (billGap.uncovered > 0) {
+    append(
+      root,
+      h(
+        'section',
+        { class: 'callout callout-warning' },
+        h('div.callout-icon', null, icon('warn', { size: 20 })),
+        h(
+          'div.callout-body',
+          null,
+          h('h3.callout-title', {
+            text: `${formatMoney(billGap.uncovered, money)} of this month's bills isn't funded`,
+          }),
+          h('p.callout-text', {
+            text: 'These are dates that are already fixed. The envelopes they draw on do not hold enough to meet them yet.',
+          }),
+        ),
+        h('a.btn', { href: '#/bills', text: 'Open bills' }),
       ),
     );
   }

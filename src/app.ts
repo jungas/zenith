@@ -16,6 +16,7 @@ import type { ThemePreference } from './core/model.ts';
 
 import { dashboardView } from './views/dashboard.ts';
 import { budgetView } from './views/budget.ts';
+import { billsView } from './views/bills.ts';
 import { cardsView, cardDetailView } from './views/cards.ts';
 import { transactionsView } from './views/transactions.ts';
 import { accountsView } from './views/accounts.ts';
@@ -33,6 +34,7 @@ interface NavItem {
 const NAV: NavItem[] = [
   { name: 'dashboard', href: '#/', label: 'Home', icon: 'dashboard' },
   { name: 'budget', href: '#/budget', label: 'Budget', icon: 'budget' },
+  { name: 'bills', href: '#/bills', label: 'Bills', icon: 'repeat' },
   { name: 'cards', href: '#/cards', label: 'Cards', icon: 'card' },
   { name: 'transactions', href: '#/transactions', label: 'Ledger', icon: 'ledger' },
   { name: 'reports', href: '#/reports', label: 'Reports', icon: 'reports' },
@@ -42,6 +44,8 @@ const ROUTES: RouteDefinition[] = [
   { name: 'dashboard', pattern: [], view: () => dashboardView({ month: currentMonth() }) },
   { name: 'budget', pattern: ['budget'], view: () => budgetView({ month: currentMonth() }) },
   { name: 'budget', pattern: ['budget', ':month'], view: ({ month }) => budgetView({ month }) },
+  { name: 'bills', pattern: ['bills'], view: () => billsView({ month: currentMonth() }) },
+  { name: 'bills', pattern: ['bills', ':month'], view: ({ month }) => billsView({ month }) },
   { name: 'cards', pattern: ['cards'], view: () => cardsView({ month: currentMonth() }) },
   {
     name: 'cards',

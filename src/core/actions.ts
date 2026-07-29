@@ -4,15 +4,17 @@
  */
 
 import {
-  canJoinSharedLimit, ensurePaymentCategories, isCredit, isDebt, makeAccount, makeCategory,
+  canJoinSharedLimit, ensurePaymentCategories, isCredit, isDebt, makeAccount, makeBill, makeCategory,
   makeInstallment, makeSharedLimit, makeTransaction, newId, paymentCategoryFor, sameBank,
   sharedLimitById,
 } from './model.ts';
 import type {
-  Account, AccountDraft, AppState, Budgets, Category, Cents, Installment, ISODate, MonthKey,
+  Account, AccountDraft, AppState, Bill, Budgets, Category, Cents, Installment, ISODate, MonthKey,
   SharedLimit, Transaction,
 } from './model.ts';
 import { todayISO } from './dates.ts';
+import { billById, billFunding, forecastAmount, isSkipped } from './bills.ts';
+import { readyToAssign } from './budget.ts';
 
 /** Fields a caller may set when recording a transaction. */
 export type TransactionDraft = Partial<Transaction>;
@@ -88,6 +90,11 @@ export function deleteAccount(state: AppState, accountId: string): AppState {
     accounts: state.accounts.filter((a) => a.id !== accountId),
     // A plan bills a card that no longer exists; it goes with it.
     installments: (state.installments ?? []).filter((plan) => plan.accountId !== accountId),
+    // A bill outlives the account it was paid from — the commitment is still
+    // real — but it can no longer name one, so it asks again when next paid.
+    bills: (state.bills ?? []).map((bill) =>
+      bill.accountId === accountId ? { ...bill, accountId: null } : bill,
+    ),
     categories,
     budgets: stripCategories(state.budgets, removedCategoryIds),
     transactions: transactions.map((t) =>
@@ -302,6 +309,136 @@ export function deleteInstallment(state: AppState, installmentId: string): AppSt
   };
 }
 
+/* ── Recurring bills ──────────────────────────────────────────────────── */
+
+export interface BillPaymentInput {
+  billId: string;
+  /** Which occurrence is being settled, by its due date. */
+  dueDate: ISODate;
+  /** When the money actually left. Defaults to today, not to the due date. */
+  date?: ISODate;
+  /** What was paid. Defaults to the bill's expected amount. */
+  amount?: Cents;
+  /** Where it was paid from. Defaults to the bill's usual account. */
+  accountId?: string;
+  memo?: string;
+  cleared?: boolean;
+}
+
+/**
+ * Track a bill. A schedule needs an anchor date to step from, so a bill without
+ * one would have no occurrences at all and is refused rather than stored empty.
+ */
+export function addBill(state: AppState, patch: Partial<Bill>): AppState {
+  const bill = makeBill(patch);
+  if (!bill.startDate) return state;
+  return { ...state, bills: [...(state.bills ?? []), bill] };
+}
+
+export function updateBill(state: AppState, billId: string, patch: Partial<Bill>): AppState {
+  return {
+    ...state,
+    bills: (state.bills ?? []).map((bill) =>
+      bill.id === billId ? makeBill({ ...bill, ...patch, id: bill.id }) : bill,
+    ),
+  };
+}
+
+/**
+ * Stop tracking a bill.
+ *
+ * The payments stay — they are real spending that really happened — but they
+ * stop pointing at a bill that no longer exists, so nothing dangles and the
+ * spending still sits in its category exactly as before.
+ */
+export function deleteBill(state: AppState, billId: string): AppState {
+  return {
+    ...state,
+    bills: (state.bills ?? []).filter((bill) => bill.id !== billId),
+    transactions: state.transactions.map((tx) =>
+      tx.billId === billId ? { ...tx, billId: null, billDue: null } : tx,
+    ),
+  };
+}
+
+/**
+ * Record a bill as paid.
+ *
+ * This is an ordinary expense with a receipt attached: the transaction carries
+ * the bill's id and the due date it settles, and that tag is the *only* thing
+ * that marks the occurrence paid. Paid on a credit card, it reserves cash in
+ * that card's payment envelope like any other charge — the wiring in
+ * `core/budget.ts` needs no special case for bills.
+ */
+export function payBill(state: AppState, input: BillPaymentInput): AppState {
+  const bill = billById(state, input.billId);
+  if (!bill || !input.dueDate) return state;
+
+  const accountId = input.accountId || bill.accountId;
+  if (!accountId || !state.accounts.some((account) => account.id === accountId)) return state;
+
+  const amount = Math.abs(Math.round(input.amount ?? forecastAmount(state, bill)));
+  if (!amount) return state;
+
+  // Paying an occurrence that was marked skipped settles the argument: it was
+  // not skipped after all.
+  const next = isSkipped(bill, input.dueDate)
+    ? unskipBillOccurrence(state, bill.id, input.dueDate)
+    : state;
+
+  return addTransaction(next, {
+    date: input.date || todayISO(),
+    accountId,
+    categoryId: bill.categoryId,
+    payee: bill.payee || bill.name,
+    memo: input.memo ?? '',
+    amount: -amount,
+    kind: 'expense',
+    cleared: input.cleared ?? false,
+    billId: bill.id,
+    billDue: input.dueDate,
+  });
+}
+
+/** Mark one occurrence as deliberately not paid. */
+export function skipBillOccurrence(state: AppState, billId: string, dueDate: ISODate): AppState {
+  const bill = billById(state, billId);
+  if (!bill || !dueDate || isSkipped(bill, dueDate)) return state;
+  return updateBill(state, billId, { skipped: [...(bill.skipped ?? []), dueDate] });
+}
+
+export function unskipBillOccurrence(state: AppState, billId: string, dueDate: ISODate): AppState {
+  const bill = billById(state, billId);
+  if (!bill) return state;
+  return updateBill(state, billId, {
+    skipped: (bill.skipped ?? []).filter((date) => date !== dueDate),
+  });
+}
+
+/**
+ * Assign what this month's remaining bills need, soonest due first.
+ *
+ * Capped at what is actually unassigned: a budget that funds its bills by
+ * going over-assigned has not funded anything, it has just moved the problem
+ * into next month. When the money runs out the nearest due dates have it, and
+ * the rest stay visibly short — which is the true state of things.
+ */
+export function assignForBills(state: AppState, month: MonthKey): AppState {
+  let pool = readyToAssign(state, month);
+  if (pool <= 0) return state;
+
+  let next = state;
+  for (const row of billFunding(state, { month }).rows) {
+    if (pool <= 0) break;
+    if (!row.categoryId || row.uncovered <= 0) continue;
+    const top = Math.min(row.uncovered, pool);
+    const current = next.budgets[month]?.[row.categoryId] ?? 0;
+    next = setBudget(next, month, row.categoryId, current + top);
+    pool -= top;
+  }
+  return next;
+}
+
 /* ── Categories ───────────────────────────────────────────────────────── */
 
 export function addCategory(state: AppState, patch: Partial<Category>): AppState {
@@ -329,6 +466,11 @@ export function deleteCategory(state: AppState, categoryId: string): AppState {
     budgets: stripCategories(state.budgets, new Set([categoryId])),
     transactions: state.transactions.map((t) =>
       t.categoryId === categoryId ? { ...t, categoryId: null } : t,
+    ),
+    // Bills budgeted here lose their envelope rather than pointing at a
+    // category that is gone; they then read as unfunded, which is the truth.
+    bills: (state.bills ?? []).map((bill) =>
+      bill.categoryId === categoryId ? { ...bill, categoryId: null } : bill,
     ),
   };
 }
@@ -530,6 +672,7 @@ export function fromBackup(json: string | unknown): AppState {
   if (!candidate.budgets || typeof candidate.budgets !== 'object') candidate.budgets = {};
   if (!Array.isArray(candidate.sharedLimits)) candidate.sharedLimits = [];
   if (!Array.isArray(candidate.installments)) candidate.installments = [];
+  if (!Array.isArray(candidate.bills)) candidate.bills = [];
   delete candidate.exportedAt;
   return tidySharedLimits(ensurePaymentCategories(candidate as unknown as AppState));
 }

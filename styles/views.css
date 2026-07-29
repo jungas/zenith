@@ -1681,3 +1681,168 @@
   color: var(--text-muted);
   font-size: var(--fs-xs);
 }
+
+/* ── Bills ──────────────────────────────────────────────────────────── */
+
+/* The month switcher standing on its own, above a view rather than beside a
+   figure — the budget bar's spacing without the budget bar's second column. */
+.month-bar {
+  margin-bottom: var(--sp-4);
+  flex-wrap: wrap;
+}
+
+.bill-list,
+.suggestion-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.bill-row {
+  padding: var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-1);
+}
+
+.bill-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+}
+
+.bill-name {
+  font-weight: 600;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.bill-amount {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.bill-actions {
+  display: flex;
+  gap: 2px;
+  flex: none;
+}
+
+.bill-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+}
+
+/*
+ * The month's occurrences, one chip each. A wrapping row rather than a list of
+ * rows: a monthly bill has one, a weekly one has five, and five full-width rows
+ * would bury the bill they belong to.
+ */
+.bill-occurrences {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+}
+
+.bill-occurrence {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: 2px var(--sp-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.bill-occurrence.is-paid {
+  border-color: transparent;
+  background: var(--track-good);
+  color: var(--success-text);
+}
+
+.bill-occurrence.is-skipped {
+  color: var(--text-muted);
+  text-decoration: line-through;
+  text-decoration-color: var(--text-muted);
+}
+
+/* Only the skipped label is struck through, never the control beside it. */
+.bill-occurrence.is-skipped .link-btn {
+  text-decoration: none;
+}
+
+.bill-occurrence.tone-critical {
+  border-color: var(--status-critical);
+}
+
+.bill-occurrence.tone-serious,
+.bill-occurrence.tone-warning {
+  border-color: var(--status-warning);
+}
+
+/* A button that reads as a link: an inline action inside a chip. */
+.link-btn {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.link-btn:hover {
+  color: var(--accent-hover);
+  text-decoration: underline;
+}
+
+.chip-quiet {
+  background: var(--wash);
+  color: var(--text-secondary);
+}
+
+.suggestion-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+}
+
+.suggestion-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.suggestion-name {
+  font-weight: 600;
+}
+
+.suggestion-meta {
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+}
+
+/* The bills note under a budget row's name, beside the rollover caption. */
+.row-bills-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+}
+
+.row-bills-note.is-short {
+  color: var(--danger-text);
+}

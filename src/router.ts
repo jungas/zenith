@@ -5,6 +5,7 @@
  * Routes:
  *   #/                     dashboard (current month)
  *   #/budget[/YYYY-MM]     budget for a month
+ *   #/bills[/YYYY-MM]      recurring bills, and what they need this month
  *   #/cards                card list
  *   #/cards/:id            one card, with payoff planner
  *   #/accounts             accounts
