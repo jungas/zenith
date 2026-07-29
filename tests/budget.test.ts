@@ -288,3 +288,60 @@ test('a backup round-trips', () => {
 test('a malformed backup is rejected with a readable message', () => {
   assert.throws(() => actions.fromBackup('{"nope":true}'), /missing "accounts"/);
 });
+
+/* ── Spending with no envelope behind it ──────────────────────────────── */
+
+test('uncategorised spending comes out of Ready to assign', () => {
+  const { state, checking } = fixture();
+  const before = monthSummary(state, JAN).readyToAssign;
+
+  const next = actions.addTransaction(state, {
+    date: `${JAN}-05`, accountId: checking.id, categoryId: null,
+    payee: 'Something', amount: -10_000, kind: 'expense',
+  });
+
+  // The cash has gone. Something has to give, and the pool of money that has
+  // not been given a job is the honest place for it to come from.
+  assert.equal(monthSummary(next, JAN).unbudgeted, 10_000);
+  assert.equal(monthSummary(next, JAN).readyToAssign, before - 10_000);
+  assert.equal(cashOnHand(next), 100_000 - 10_000);
+  assert.ok(reconcile(next, JAN).balanced, 'the identity still holds');
+});
+
+test('an uncategorised charge on a card does not touch Ready to assign', () => {
+  const { state, visa } = fixture();
+  const before = monthSummary(state, JAN).readyToAssign;
+
+  // No cash moved — the card owes more. Subtracting from Ready to assign here
+  // would break the identity in the other direction.
+  const next = actions.addTransaction(state, {
+    date: `${JAN}-05`, accountId: visa.id, categoryId: null,
+    payee: 'Something', amount: -10_000, kind: 'expense',
+  });
+
+  assert.equal(monthSummary(next, JAN).unbudgeted, 0);
+  assert.equal(monthSummary(next, JAN).readyToAssign, before);
+  assert.equal(cashOnHand(next), 100_000);
+  assert.ok(reconcile(next, JAN).balanced);
+});
+
+test('moving money between accounts is uncategorised and changes nothing', () => {
+  let { state, checking } = fixture();
+  state = actions.addAccount(state, {
+    name: 'Savings', type: 'savings', openingBalance: 0, openedOn: `${JAN}-01`,
+  });
+  const savings = account(state, 'Savings');
+  const before = monthSummary(state, JAN).readyToAssign;
+
+  const next = actions.addTransfer(state, {
+    fromAccountId: checking.id, toAccountId: savings.id, amount: 25_000, date: `${JAN}-05`,
+  });
+
+  // Both legs carry no category, and neither should: the money is still yours
+  // and still budgeted for whatever it was budgeted for.
+  assert.ok(next.transactions.every((t) => t.categoryId === null));
+  assert.equal(monthSummary(next, JAN).unbudgeted, 0);
+  assert.equal(monthSummary(next, JAN).readyToAssign, before);
+  assert.equal(cashOnHand(next), 100_000);
+  assert.ok(reconcile(next, JAN).balanced);
+});

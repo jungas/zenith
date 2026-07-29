@@ -21,12 +21,14 @@ import { formatDate, todayISO } from '../core/dates.ts';
 import { isCredit } from '../core/model.ts';
 import { readPdfText, PdfPasswordError, PdfReadError, PdfUnsupportedEncryptionError, pdfIsEncrypted, looksLikePdf } from '../core/pdf/read.ts';
 import { parseStatement } from '../core/statement.ts';
+import { findMatchingPlan, planFromStatementRow } from '../core/installments.ts';
 import type { DateOrder, ParsedStatement } from '../core/statement.ts';
 import type { TextLine } from '../core/pdf/read.ts';
 import {
-  applyImport, buildDrafts, importTotals, suggestAccountId,
+  applyImport, buildDrafts, importTotals, reconcileWithStatement, suggestAccountId,
 } from '../core/statement-import.ts';
 import type { ImportDraft } from '../core/statement-import.ts';
+import * as actions from '../core/actions.ts';
 import { commit, getState, moneyOpts, undo } from '../store.ts';
 import { navigate } from '../router.ts';
 import type { AppState, MoneyOptions } from '../core/model.ts';
@@ -43,10 +45,19 @@ interface Session {
   memo: string;
 }
 
+/**
+ * The in-progress import, held outside the view function on purpose.
+ *
+ * Any `commit` re-renders the current route from scratch, so a session living
+ * inside `importView` would be destroyed by the very buttons on this screen —
+ * correcting a starting balance would throw away the review it was offered
+ * from. Reviewing a statement is minutes of work; it outlives a repaint.
+ */
+let session: Session | null = null;
+
 export function importView(): HTMLElement {
   const root = h('div.view.view-import');
   const stage = h('div.import-stage');
-  let session: Session | null = null;
 
   append(
     root,
@@ -255,6 +266,7 @@ export function importView(): HTMLElement {
 
     const rowsHost = h('ul.import-rows', { role: 'list' });
     const totalsHost = h('div.import-totals');
+    const checkHost = h('div');
 
     const refreshTotals = (): void => {
       if (!session) return;
@@ -268,11 +280,12 @@ export function importView(): HTMLElement {
         ),
         totals.unassignedPayments
           ? h('p.import-warn', null, icon('warn', { size: 15 }), h('span', {
-              text: `${totals.unassignedPayments} card payment${totals.unassignedPayments === 1 ? '' : 's'} still need an account to pay from, and will be skipped.`,
+              text: `${totals.unassignedPayments} row${totals.unassignedPayments === 1 ? '' : 's'} still need the account on the other side, and will be skipped.`,
             }))
           : null,
       );
       importButton.disabled = totals.selected === 0;
+      mount(checkHost, statementCheck(session as Session, money));
     };
 
     const paintRows = (): void => {
@@ -323,6 +336,8 @@ export function importView(): HTMLElement {
     mount(
       stage,
       summaryCard(session, money),
+      checkHost,
+      installmentOffer(session),
       h(
         'section.card.block',
         null,
@@ -382,11 +397,193 @@ export function importView(): HTMLElement {
     }
   }
 
-  renderPicker(null);
+  // A re-render lands here again: pick up where the session left off.
+  if (session) renderReview();
+  else renderPicker(null);
   return root;
 }
 
 /* ── Pieces ─────────────────────────────────────────────────────────── */
+
+/**
+ * Offer to track the instalment plans this statement mentions.
+ *
+ * A row reading `INSTALLMENT - APPLIANCE 3/12` says two things: ₱4,166.60 was
+ * billed this month, and it will be billed nine more times. The first is the
+ * transaction being imported; the second is invisible unless someone writes it
+ * down, and it is the half that lets you plan.
+ *
+ * The row itself still imports as an ordinary charge — the plan records what is
+ * still to come, and creates nothing.
+ */
+function installmentOffer(session: Session): HTMLElement | null {
+  const state = getState();
+  const accountId = session.accountId;
+  if (!isCredit(state.accounts.find((a) => a.id === accountId))) return null;
+
+  const candidates = session.drafts
+    .filter((draft) => draft.include && draft.amount < 0)
+    .map((draft) =>
+      planFromStatementRow(
+        { description: draft.payee, amount: Math.abs(draft.amount), date: draft.date },
+        accountId,
+      ),
+    )
+    .filter((plan): plan is NonNullable<typeof plan> => plan !== null)
+    .filter((plan) => !findMatchingPlan(state, plan));
+
+  if (!candidates.length) return null;
+
+  return h(
+    'section.card.block',
+    null,
+    h('h3.card-title', {
+      text: candidates.length === 1 ? 'One row is an instalment' : `${candidates.length} rows are instalments`,
+    }),
+    h('p.card-text', {
+      text: 'These look like monthly instalments of a larger purchase. Tracking them records what is still to be billed, so future months are not a surprise. The charges themselves import either way.',
+    }),
+    h(
+      'ul.mini-list',
+      { role: 'list' },
+      candidates.map((plan) =>
+        h(
+          'li.mini-row',
+          null,
+          h('span.mini-name', { text: plan.description }),
+          h('span.mini-meta', { text: `${plan.months} months from ${plan.startMonth}` }),
+        ),
+      ),
+    ),
+    h(
+      'div.button-row',
+      null,
+      h(
+        'button.btn',
+        {
+          type: 'button',
+          onclick: () => {
+            commit(
+              (current) =>
+                candidates.reduce(
+                  (next, plan) =>
+                    findMatchingPlan(next, plan) ? next : actions.addInstallment(next, plan),
+                  current,
+                ),
+              { label: 'track plans' },
+            );
+            toast(
+              `${candidates.length} instalment plan${candidates.length === 1 ? '' : 's'} tracked.`,
+              { tone: 'success', action: { label: 'Undo', onClick: () => undo() } },
+            );
+          },
+        },
+        icon('calendar', { size: 16 }),
+        h('span', {
+          text: candidates.length === 1 ? 'Track this plan' : `Track all ${candidates.length}`,
+        }),
+      ),
+    ),
+  );
+}
+
+/**
+ * Does the result of this import match what the statement says is owed?
+ *
+ * The common way it does not: adding a card asks for the balance owed *today*,
+ * and taking that figure from the statement you are about to import means the
+ * starting balance already contains every row on it. Importing then counts the
+ * same spending twice. That is worth catching here rather than leaving someone
+ * to notice a wrong balance later and not know why.
+ */
+function statementCheck(session: Session, money: Money): HTMLElement | null {
+  const state = getState();
+  const check = reconcileWithStatement(state, session.drafts, session.accountId, {
+    totalDue: session.parsed.summary.totalDue,
+    statementDate: session.parsed.summary.statementDate,
+  });
+  if (!check) return null;
+
+  const account = state.accounts.find((a) => a.id === session.accountId);
+  const when = session.parsed.summary.statementDate;
+
+  if (check.agrees) {
+    return h(
+      'section.card.block',
+      null,
+      h('h3.card-title', { text: 'Checked against the statement' }),
+      h(
+        'p.card-text',
+        null,
+        statusPill('good', 'Balances match', { size: 'sm' }),
+        h('span', {
+          text: `Importing these rows leaves ${account?.name ?? 'this card'} owing ${formatMoney(check.projected, money)} — exactly what the statement says.`,
+        }),
+      ),
+    );
+  }
+
+  return h(
+    'section.card.block',
+    null,
+    h('h3.card-title', { text: 'Checked against the statement' }),
+    h(
+      'p.card-text',
+      null,
+      statusPill('warning', `${formatMoney(Math.abs(check.difference), money)} out`, { size: 'sm' }),
+      h('span', {
+        text: `Importing these rows leaves ${account?.name ?? 'this card'} owing ${formatMoney(check.projected, money)}${when ? ` as of ${formatDate(when, money.locale)}` : ''}, but the statement says ${formatMoney(check.stated, money)}.`,
+      }),
+    ),
+    check.looksLikeDoubleCount
+      ? h(
+          'div.inline-note',
+          null,
+          icon('info', { size: 16 }),
+          h('p', {
+            text: `The gap is exactly what these rows add up to, so the card's starting balance most likely already includes them. If you entered what you owed today, that figure was the result of this statement — importing it as well counts the same spending twice.`,
+          }),
+        )
+      : h(
+          'div.inline-note',
+          null,
+          icon('info', { size: 16 }),
+          h('p', {
+            text: 'The difference is whatever this statement does not explain — an earlier balance, or transactions already recorded by hand.',
+          }),
+        ),
+    h(
+      'div.button-row',
+      null,
+      h(
+        'button.btn',
+        {
+          type: 'button',
+          onclick: () => {
+            const accountId = session.accountId;
+            const opening = check.suggestedOpeningBalance;
+            commit((current) => actions.updateAccount(current, accountId, { openingBalance: opening }), {
+              label: 'starting balance',
+            });
+            // No repaint here: `commit` re-renders the route, which rebuilds
+            // this panel from the corrected state.
+            toast(
+              `Starting balance set to ${formatMoney(Math.abs(opening), money)}.`,
+              { tone: 'success', action: { label: 'Undo', onClick: () => undo() } },
+            );
+          },
+        },
+        icon('edit', { size: 16 }),
+        h('span', {
+          text: `Set the starting balance to ${formatMoney(Math.abs(check.suggestedOpeningBalance), money)}`,
+        }),
+      ),
+    ),
+    h('p.import-note', null, icon('info', { size: 14 }), h('span', {
+      text: 'Or leave it — nothing here is wrong if you meant to keep both figures.',
+    })),
+  );
+}
 
 function fact(iconName: IconName, text: string): HTMLElement {
   return h('li.import-fact', null, icon(iconName, { size: 16 }), h('span', { text }));
@@ -540,18 +737,23 @@ function draftRow(
     },
   }, icon(outgoing ? 'arrowUp' : 'arrowDown', { size: 14 }), h('span', { text: outgoing ? 'Out' : 'In' }));
 
-  /* A payment to a card is a transfer, so it needs a source account. */
-  const secondary = isPayment
+  const isTransfer = draft.role === 'transfer';
+
+  /*
+   * A transfer or a card payment needs the account on the other side. Both are
+   * uncategorised by nature: the money is still yours, so no envelope changes.
+   */
+  const secondary = isPayment || isTransfer
     ? select(
         [
-          { value: '', label: 'Paid from…' },
+          { value: '', label: isPayment ? 'Paid from…' : draft.amount < 0 ? 'Moved to…' : 'Moved from…' },
           ...state.accounts
-            .filter((a) => !a.archived && !isCredit(a))
+            .filter((a) => !a.archived && a.id !== session.accountId && (!isPayment || !isCredit(a)))
             .map((a) => ({ value: a.id, label: a.name, selected: a.id === draft.fromAccountId })),
         ],
         {
           class: 'input import-category',
-          'aria-label': 'Paid from',
+          'aria-label': isPayment ? 'Paid from' : 'Other account',
           onchange: (event: Event) => {
             draft.fromAccountId = (event.target as HTMLSelectElement).value || null;
             refreshTotals();
@@ -576,6 +778,35 @@ function draftRow(
           },
         );
 
+  /*
+   * Nothing on a statement distinguishes money spent from money moved to your
+   * own other account, so this is the one classification a person has to make.
+   * It matters: recorded as spending, a transfer overstates what you spent and,
+   * having no envelope, comes out of Ready to assign.
+   */
+  const transferToggle = draft.role === 'payment'
+    ? null
+    : h('button', {
+        type: 'button',
+        class: `import-direction${isTransfer ? ' is-in' : ''}`,
+        title: isTransfer
+          ? 'Recorded as moving money between your own accounts — press to record it as spending'
+          : 'Press if this moved money between your own accounts rather than spending it',
+        onclick: () => {
+          if (isTransfer) {
+            const card = isCredit(state.accounts.find((a) => a.id === session.accountId));
+            draft.role = draft.amount < 0 ? (card ? 'charge' : 'expense') : card ? 'refund' : 'income';
+            draft.fromAccountId = null;
+            if (draft.role === 'income') draft.categoryId = null;
+          } else {
+            draft.role = 'transfer';
+            draft.categoryId = null;
+            draft.fromAccountId = defaultPaymentSource(state, session.accountId);
+          }
+          repaint();
+        },
+      }, icon('transfer', { size: 14 }), h('span', { text: isTransfer ? 'Transfer' : 'Move' }));
+
   return h(
     'li',
     { class: `import-row${draft.include ? '' : ' is-excluded'}${draft.duplicateOf ? ' is-duplicate' : ''}` },
@@ -584,7 +815,7 @@ function draftRow(
       h('div.import-line', null, dateField, payeeField),
       h('div.import-line', null,
         secondary,
-        h('div.import-amount-group', null, directionButton, amountField),
+        h('div.import-amount-group', null, transferToggle, directionButton, amountField),
       ),
       draft.duplicateOf
         ? h('p.import-note', null,
@@ -592,10 +823,20 @@ function draftRow(
             h('span', { text: duplicateNote(state, draft, money) }),
           )
         : null,
-      isPayment && !draft.fromAccountId
+      (isPayment || isTransfer) && !draft.fromAccountId
         ? h('p.import-note', null,
             icon('warn', { size: 14 }),
-            h('span', { text: 'A payment to a card moves real money, so Zenith needs to know which account it left.' }),
+            h('span', {
+              text: isPayment
+                ? 'A payment to a card moves real money, so Zenith needs to know which account it left.'
+                : 'Moving money needs both ends. Pick the account on the other side, or switch this back to spending.',
+            }),
+          )
+        : null,
+      isTransfer
+        ? h('p.import-note', null,
+            icon('info', { size: 14 }),
+            h('span', { text: 'Moving money between your own accounts is not spending, so it has no category and no envelope changes.' }),
           )
         : null,
     ),

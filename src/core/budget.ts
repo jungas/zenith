@@ -29,7 +29,7 @@
  */
 
 import { addMonths, compareMonths, currentMonth, monthOf, monthRange, todayISO } from './dates.ts';
-import { isAsset, isCredit } from './model.ts';
+import { isAsset, isCredit, isDebt } from './model.ts';
 import type { AppState, Cents, ISODate, MonthKey, Transaction, TxKind } from './model.ts';
 
 /** One category's standing in one month. */
@@ -56,6 +56,11 @@ export interface MonthSummary {
   spending: Cents;
   budgeted: Cents;
   overspent: Cents;
+  /**
+   * Money that left an asset account without being budgeted anywhere. It comes
+   * straight out of Ready to assign — see `buildLedger`.
+   */
+  unbudgeted: Cents;
   /** Cash that has arrived but has not been given a job yet. */
   readyToAssign: Cents;
 }
@@ -92,11 +97,11 @@ export interface TransactionFilters {
  * User transactions plus a synthesised opening-balance entry per account, so
  * balances and income both fall out of one list.
  *
- * An asset account's opening balance is money you can budget. A credit
- * account's opening balance is pre-existing debt: it moves the card's balance
- * but is deliberately *not* income and *not* category activity — you never
- * budgeted for it, and pretending otherwise would invent money. It shows up
- * instead as uncovered debt on the card.
+ * An asset account's opening balance is money you can budget. A **debt**
+ * account's opening balance — a card's or a loan's — is money already owed: it
+ * moves that account's balance but is deliberately *not* income and *not*
+ * category activity. You never budgeted for it, and pretending otherwise would
+ * invent money. It shows up instead as debt the budget has yet to cover.
  */
 export function ledgerTransactions(state: AppState): Transaction[] {
   const synthetic: Transaction[] = [];
@@ -110,7 +115,7 @@ export function ledgerTransactions(state: AppState): Transaction[] {
       payee: 'Starting balance',
       memo: '',
       amount: account.openingBalance,
-      kind: isCredit(account) ? 'adjustment' : 'income',
+      kind: isDebt(account) ? 'adjustment' : 'income',
       cleared: true,
       transferId: null,
       system: true,
@@ -158,14 +163,27 @@ export function cashOnHand(state: AppState, throughISO: ISODate | null = null): 
   return total;
 }
 
-/** Total owed across credit accounts, returned positive. */
+/** Total owed on credit cards, returned positive. */
 export function totalDebt(state: AppState, throughISO: ISODate | null = null): Cents {
+  return owedAcross(state, throughISO, isCredit);
+}
+
+/** Total owed across every debt account — cards and loans alike. */
+export function totalOwed(state: AppState, throughISO: ISODate | null = null): Cents {
+  return owedAcross(state, throughISO, isDebt);
+}
+
+function owedAcross(
+  state: AppState,
+  throughISO: ISODate | null,
+  matches: (account: AppState['accounts'][number]) => boolean,
+): Cents {
   const balances = accountBalances(state, throughISO);
   let total = 0;
   for (const account of state.accounts) {
-    if (isCredit(account)) total += Math.min(0, balances.get(account.id) ?? 0);
+    if (matches(account)) total += Math.min(0, balances.get(account.id) ?? 0);
   }
-  return -total;
+  return -total || 0;
 }
 
 export function netWorth(state: AppState, throughISO: ISODate | null = null): Cents {
@@ -224,6 +242,7 @@ export function buildLedger(
   let fundsToDate = 0;
   let budgetedToDate = 0;
   let overspentCarried = 0;
+  let unbudgetedToDate = 0;
 
   for (const month of months) {
     const transactions = byMonth.get(month) ?? [];
@@ -244,6 +263,7 @@ export function buildLedger(
     let income = 0;
     let startingFunds = 0;
     let spending = 0;
+    let unbudgeted = 0;
 
     for (const tx of transactions) {
       // An opening balance is money to budget, but it is not *income* — folding
@@ -257,6 +277,19 @@ export function buildLedger(
       if (row) {
         row.activity += tx.amount;
         if (tx.kind === 'expense' && tx.amount < 0) spending += -tx.amount;
+      } else if (tx.kind === 'expense' && tx.amount < 0 && isAsset(accountsById.get(tx.accountId ?? ''))) {
+        // Spending with no envelope behind it. The cash has gone, so something
+        // has to give: it comes out of Ready to assign, which is the pool of
+        // money that has not been given a job. Leaving it out entirely — which
+        // is what happened before — made cash fall while the budget went on
+        // claiming the money was still there, and the integrity check in
+        // Settings would report the gap without being able to explain it.
+        //
+        // Only from an asset account: the same charge on a credit card moves no
+        // cash, so subtracting it would break the identity in the other
+        // direction.
+        unbudgeted += -tx.amount;
+        spending += -tx.amount;
       }
 
       // Rule 2: spending on a card reserves the same cash for its payment.
@@ -279,6 +312,7 @@ export function buildLedger(
 
     fundsToDate += income + startingFunds;
     budgetedToDate += budgeted;
+    unbudgetedToDate += unbudgeted;
 
     const summary: MonthSummary = {
       month,
@@ -288,7 +322,10 @@ export function buildLedger(
       spending,
       budgeted,
       overspent,
-      readyToAssign: fundsToDate - budgetedToDate - overspentCarried,
+      unbudgeted,
+      // Unbudgeted spending bites in the month it happens, unlike overspending
+      // an envelope, which is absorbed by the month after.
+      readyToAssign: fundsToDate - budgetedToDate - overspentCarried - unbudgetedToDate,
     };
     ledger.set(month, summary);
 
@@ -310,6 +347,7 @@ export function monthSummary(state: AppState, month: MonthKey = currentMonth()):
       spending: 0,
       budgeted: 0,
       overspent: 0,
+      unbudgeted: 0,
       readyToAssign: 0,
     }
   );

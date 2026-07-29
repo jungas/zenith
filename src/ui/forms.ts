@@ -7,13 +7,14 @@ import { field, input, moneyInput, select, segmented, statusPill } from './compo
 import type { SelectGroup, SelectOption } from './components.ts';
 import { icon } from './icons.ts';
 import { parseMoney, centsToInput, formatMoney } from '../core/money.ts';
-import { todayISO } from '../core/dates.ts';
+import { addMonths, currentMonth, monthLabel, todayISO } from '../core/dates.ts';
 import {
-  ACCOUNT_TYPES, CARD_ISSUERS, CATEGORY_COLORS, isCredit, isWallet, paymentCategoryFor,
-  WALLET_PROVIDERS,
+  ACCOUNT_TYPES, CARD_ISSUERS, CATEGORY_COLORS, isCredit, isLoan, isWallet, LOAN_KINDS,
+  paymentCategoryFor, sameBank, sharedLimitFor, sharedLimitMembers, WALLET_PROVIDERS,
 } from '../core/model.ts';
 import type {
-  Account, AccountType, Category, Cents, ISODate, MonthKey, SeriesColor, Transaction, TxKind,
+  Account, AccountType, Category, Cents, CreditAccount, Installment, ISODate, MonthKey,
+  SeriesColor, Transaction, TxKind,
 } from '../core/model.ts';
 import { cardSnapshot, type CardSnapshot } from '../core/cards.ts';
 import { commit, getState, moneyOpts, undo } from '../store.ts';
@@ -459,17 +460,47 @@ export function openAccountForm({ account = null, presetType }: AccountFormOptio
   const errorSlot = h('div.form-error-slot');
   const nameInput = input({ value: account?.name ?? '', placeholder: 'Everyday Checking', required: true });
 
+  /**
+   * Which limit this card draws on: '' for its own, `card:<id>` to share with a
+   * card that has no group yet, `limit:<id>` to join an existing one. Held out
+   * here because choosing it re-renders the form, and a value that lived inside
+   * `render` would be thrown away by the render it triggers.
+   */
+  let sharedChoice = isCredit(account) && account.sharedLimitId ? `limit:${account.sharedLimitId}` : '';
+  /** The limit figure, likewise preserved across those re-renders. */
+  let limitDraft = isCredit(account) && account.creditLimit ? centsToInput(account.creditLimit) : '';
+  if (isCredit(account)) {
+    const joined = sharedLimitFor(getState(), account);
+    if (joined) limitDraft = centsToInput(joined.creditLimit);
+  }
+  /** The bank as currently typed, which decides who this card may share with. */
+  let providerDraft = existing?.provider ?? '';
+  /** Whether the rate is being entered per year or per month. */
+  let rateBasis: 'annual' | 'monthly' =
+    isCredit(account) && account.rateBasis === 'monthly' ? 'monthly' : 'annual';
+
   const render = (): void => {
     const credit = type === 'credit';
     const wallet = type === 'wallet';
+    const loan = type === 'loan';
     // One field, two vocabularies: a wallet has a provider, a card has an
     // issuing bank. They are the same fact — who runs the account — so they
     // share `provider` rather than growing a second nearly-identical column.
     const providerInput = input({
-      value: existing?.provider ?? '',
-      placeholder: credit ? 'BPI' : 'GCash',
+      value: providerDraft,
+      placeholder: credit ? 'BPI' : loan ? 'Pag-IBIG' : 'GCash',
       list: credit ? 'card-issuers' : 'wallet-providers',
       autocomplete: 'off',
+      oninput: (event: Event) => {
+        providerDraft = (event.target as HTMLInputElement).value;
+      },
+      // Who this card may share a limit with depends entirely on the bank, so
+      // just that field is rebuilt once this one settles. Re-rendering the whole
+      // form from inside a change handler would tear out the element currently
+      // losing focus.
+      onchange: () => {
+        if (credit) mount(sharedSlot, sharedLimitField());
+      },
     });
     const openingInput = moneyInput({
       value: account ? centsToInput(account.openingBalance) : '',
@@ -479,12 +510,58 @@ export function openAccountForm({ account = null, presetType }: AccountFormOptio
 
     // Card terms only exist on a card, so read them through the narrowed value.
     const terms = isCredit(account) ? account : null;
-    const limitInput = moneyInput({ value: terms?.creditLimit ? centsToInput(terms.creditLimit) : '' });
+    const limitInput = moneyInput({
+      value: limitDraft,
+      oninput: (event: Event) => {
+        limitDraft = (event.target as HTMLInputElement).value;
+      },
+    });
+    // Philippine banks quote a monthly rate — a BDO statement says 3.5%, not
+    // 42% — so the unit is part of the field rather than something to convert
+    // in your head. `apr` is stored annually either way.
+    const shownRate = terms?.apr
+      ? (rateBasis === 'monthly' ? (terms.apr / 12) * 100 : terms.apr * 100)
+      : null;
     const aprInput = h<HTMLInputElement>('input.input', {
       type: 'number', step: '0.01', min: '0', max: '99',
-      value: terms?.apr ? (terms.apr * 100).toFixed(2) : '',
-      placeholder: '19.99',
+      value: shownRate == null ? '' : shownRate.toFixed(2),
+      placeholder: rateBasis === 'monthly' ? '3.50' : '19.99',
+      oninput: () => renderRateHint(),
     });
+    aprInput.id = 'acct-apr';
+    const rateBasisSelect = select(
+      [
+        { value: 'annual', label: 'per year', selected: rateBasis === 'annual' },
+        { value: 'monthly', label: 'per month', selected: rateBasis === 'monthly' },
+      ],
+      {
+        class: 'input rate-basis',
+        'aria-label': 'Rate period',
+        onchange: (event: Event) => {
+          // The typed digits are left exactly as they are. Someone copying a
+          // figure off a statement and then setting the unit means "this number
+          // is monthly", not "convert my number" — rewriting 3.5 to 0.29 under
+          // them would be a change they did not ask for and might not notice.
+          // The hint below states the equivalent immediately instead.
+          rateBasis = (event.target as HTMLSelectElement).value === 'monthly' ? 'monthly' : 'annual';
+          aprInput.placeholder = rateBasis === 'monthly' ? '3.50' : '19.99';
+          renderRateHint();
+        },
+      },
+    );
+    const rateHint = h('span.field-hint');
+    const renderRateHint = (): void => {
+      const typed = Number.parseFloat(aprInput.value || '0');
+      if (!Number.isFinite(typed) || !typed) {
+        rateHint.textContent = 'Used for interest projections.';
+        return;
+      }
+      rateHint.textContent =
+        rateBasis === 'monthly'
+          ? `${typed.toFixed(2)}% a month is ${(typed * 12).toFixed(2)}% a year.`
+          : `${typed.toFixed(2)}% a year is ${(typed / 12).toFixed(2)}% a month.`;
+    };
+    renderRateHint();
     const statementInput = h<HTMLInputElement>('input.input', {
       type: 'number', min: '1', max: '31', value: terms?.statementDay ?? 18,
     });
@@ -496,6 +573,126 @@ export function openAccountForm({ account = null, presetType }: AccountFormOptio
       value: ((terms?.minPaymentRate ?? 0.02) * 100).toFixed(1),
     });
     const minFloorInput = moneyInput({ value: centsToInput(terms?.minPaymentFloor ?? 2500) });
+
+    // Loan terms. A loan is repaid, never spent on, so what it needs is the
+    // monthly amortisation and how long it runs — not a limit.
+    const loanTerms = isLoan(account) ? account : null;
+    const loanKindInput = input({
+      value: loanTerms?.kind ?? '',
+      placeholder: 'Auto loan',
+      list: 'loan-kinds',
+      autocomplete: 'off',
+    });
+    const principalInput = moneyInput({
+      value: loanTerms?.principal ? centsToInput(loanTerms.principal) : '',
+    });
+    const monthlyPaymentInput = moneyInput({
+      value: loanTerms?.monthlyPayment ? centsToInput(loanTerms.monthlyPayment) : '',
+    });
+    const termInput = h<HTMLInputElement>('input.input', {
+      type: 'number', min: '1', max: '600', step: '1',
+      value: loanTerms?.termMonths ? String(loanTerms.termMonths) : '',
+      placeholder: '48',
+    });
+    const loanDueInput = h<HTMLInputElement>('input.input', {
+      type: 'number', min: '1', max: '31', value: loanTerms?.dueDay ?? 5,
+    });
+    const loanStartInput = h<HTMLInputElement>('input.input', {
+      type: 'month', value: loanTerms?.startMonth || currentMonth(),
+    });
+
+    /**
+     * Who this card shares its limit with.
+     *
+     * A shared limit only exists within one bank, so the options are drawn from
+     * cards carrying the same `provider` — and with no bank typed there is
+     * nothing to draw from, which the hint says rather than showing an empty
+     * list. Existing groups are named by the cards on them, because that is how
+     * someone recognises which limit is which.
+     */
+    const sharedLimitField = (): HTMLElement | null => {
+      if (!credit) return null;
+      const state = getState();
+      const bank = providerDraft.trim();
+
+      if (!bank) {
+        return h(
+          'div.inline-note',
+          null,
+          icon('info', { size: 16 }),
+          h('p', {
+            text: 'Some banks issue two cards that draw on one limit. Name the issuing bank above and Zenith can link them.',
+          }),
+        );
+      }
+
+      const sameBankCards = state.accounts.filter(
+        (a): a is CreditAccount => isCredit(a) && !a.archived && a.id !== account?.id && sameBank(a.provider, bank),
+      );
+      const groups = (state.sharedLimits ?? []).filter((limit) => sameBank(limit.provider, bank));
+
+      if (!sameBankCards.length && !groups.length) {
+        return h(
+          'div.inline-note',
+          null,
+          icon('info', { size: 16 }),
+          h('p', {
+            text: `This is your only ${bank} card. Add a second one and you can put them both on a single shared limit.`,
+          }),
+        );
+      }
+
+      const options: SelectOption[] = [
+        { value: '', label: 'It has its own limit', selected: sharedChoice === '' },
+      ];
+      for (const limit of groups) {
+        const names = sharedLimitMembers(state, limit.id)
+          .filter((member) => member.id !== account?.id)
+          .map((member) => member.name)
+          .join(' + ');
+        options.push({
+          value: `limit:${limit.id}`,
+          label: names ? `Shared with ${names}` : limit.name,
+          selected: sharedChoice === `limit:${limit.id}`,
+        });
+      }
+      for (const other of sameBankCards) {
+        if (other.sharedLimitId) continue; // already offered as a group above
+        options.push({
+          value: `card:${other.id}`,
+          label: `Shared with ${other.name}`,
+          selected: sharedChoice === `card:${other.id}`,
+        });
+      }
+
+      return field(
+        'Credit limit is',
+        select(options, {
+          onchange: (event: Event) => {
+            sharedChoice = (event.target as HTMLSelectElement).value;
+            paintLimitLabel();
+          },
+        }),
+        {
+          id: 'acct-shared',
+          hint: `Only ${bank} cards can share a limit — a shared limit is one the bank granted across its own cards.`,
+        },
+      );
+    };
+    const limitLabel = h('span.field-label');
+    const limitHint = h('span.field-hint');
+    const paintLimitLabel = (): void => {
+      const sharing = sharedChoice !== '';
+      limitLabel.textContent = sharing ? 'Shared credit limit' : 'Credit limit';
+      limitHint.textContent = sharing
+        ? 'One limit for every card sharing it — changing it here changes it for all of them.'
+        : '';
+    };
+    paintLimitLabel();
+    limitInput.id = 'acct-limit';
+
+    const sharedSlot = h('div');
+    if (credit) mount(sharedSlot, sharedLimitField());
 
     mount(
       body,
@@ -516,31 +713,68 @@ export function openAccountForm({ account = null, presetType }: AccountFormOptio
         { id: 'acct-type', hint: editing ? 'Type cannot change after creation.' : undefined },
       ),
       field('Name', nameInput, { id: 'acct-name' }),
-      wallet || credit
+      wallet || credit || loan
         ? h(
             'div',
             null,
-            credit
+            credit || loan
               ? h(
                   'datalist#card-issuers',
                   null,
                   CARD_ISSUERS.map((issuer) => h('option', { value: issuer.name, label: issuer.region })),
                 )
               : h('datalist#wallet-providers', null, WALLET_PROVIDERS.map((n) => h('option', { value: n }))),
-            field(credit ? 'Issuing bank' : 'Provider', providerInput, {
+            field(credit ? 'Issuing bank' : loan ? 'Lender' : 'Provider', providerInput, {
               id: 'acct-provider',
               hint: credit
                 ? 'The bank behind the card. Philippine issuers are listed first; anything else can be typed.'
-                : 'Who runs the wallet. Shown beside the account so two wallets never look alike.',
+                : loan
+                  ? 'Who lent the money — a bank, Pag-IBIG, SSS, a dealership.'
+                  : 'Who runs the wallet. Shown beside the account so two wallets never look alike.',
             }),
           )
         : null,
-      field(credit ? 'Balance owed today' : 'Current balance', openingInput, {
+      field(credit || loan ? 'Balance owed today' : 'Current balance', openingInput, {
         id: 'acct-opening',
         hint: credit
           ? 'Existing debt. Nothing was budgeted for it, so it shows as unfunded until you assign money to the card.'
-          : 'Money already in the account — this becomes your starting funds to budget.',
+          : loan
+            ? 'What is still outstanding. It was never income, so it does not add to what you have to budget.'
+            : 'Money already in the account — this becomes your starting funds to budget.',
       }),
+      loan
+        ? h(
+            'div.form-section',
+            null,
+            h('datalist#loan-kinds', null, LOAN_KINDS.map((name) => h('option', { value: name }))),
+            h('h3.form-section-title', { text: 'Loan terms' }),
+            field('What kind of loan', loanKindInput, { id: 'acct-loan-kind' }),
+            h(
+              'div.form-grid',
+              null,
+              field('Amount borrowed', principalInput, {
+                id: 'acct-principal',
+                hint: 'The original amount, for tracking progress.',
+              }),
+              field('Monthly payment', monthlyPaymentInput, { id: 'acct-monthly' }),
+            ),
+            h(
+              'div.form-grid',
+              null,
+              field('Number of months', termInput, { id: 'acct-term' }),
+              field('Payment due on day', loanDueInput, { id: 'acct-loan-due' }),
+            ),
+            field('First payment', loanStartInput, { id: 'acct-loan-start' }),
+            h(
+              'div.inline-note',
+              null,
+              icon('link', { size: 16 }),
+              h('p', {
+                text: 'A payment envelope is created for this loan. Budget the monthly amount into it and paying the loan spends it — which is what keeps your accounts and your budget in step.',
+              }),
+            ),
+          )
+        : null,
       credit
         ? h(
             'div.form-section',
@@ -549,9 +783,22 @@ export function openAccountForm({ account = null, presetType }: AccountFormOptio
             h(
               'div.form-grid',
               null,
-              field('Credit limit', limitInput, { id: 'acct-limit' }),
-              field('APR %', aprInput, { id: 'acct-apr', hint: 'Used for interest projections' }),
+              h(
+                'label.field',
+                { for: 'acct-limit' },
+                limitLabel,
+                limitInput,
+                limitHint,
+              ),
+              h(
+                'label.field',
+                { for: 'acct-apr' },
+                h('span.field-label', { text: 'Interest rate %' }),
+                h('div.rate-row', null, aprInput, rateBasisSelect),
+                rateHint,
+              ),
             ),
+            sharedSlot,
             h(
               'div.form-grid',
               null,
@@ -585,13 +832,26 @@ export function openAccountForm({ account = null, presetType }: AccountFormOptio
       const patch: AccountDraft = {
         name,
         type,
-        openingBalance: credit ? -openingRaw : openingRaw,
-        ...(wallet || credit ? { provider: providerInput.value.trim() } : {}),
+        openingBalance: credit || loan ? -openingRaw : openingRaw,
+        ...(wallet || credit || loan ? { provider: providerInput.value.trim() } : {}),
       };
+      if (loan) {
+        Object.assign(patch, {
+          kind: loanKindInput.value.trim(),
+          principal: Math.abs(parseMoney(principalInput.value)),
+          monthlyPayment: Math.abs(parseMoney(monthlyPaymentInput.value)),
+          termMonths: Math.max(0, Number.parseInt(termInput.value, 10) || 0),
+          dueDay: clampDay(loanDueInput.value, 5),
+          startMonth: loanStartInput.value || currentMonth(),
+        });
+      }
       if (credit) {
+        const typedRate = Math.max(0, Number.parseFloat(aprInput.value || '0')) / 100;
         Object.assign(patch, {
           creditLimit: Math.abs(parseMoney(limitInput.value)),
-          apr: Math.max(0, Number.parseFloat(aprInput.value || '0')) / 100,
+          // Stored annually whatever was typed, so every projection has one basis.
+          apr: rateBasis === 'monthly' ? typedRate * 12 : typedRate,
+          rateBasis,
           statementDay: clampDay(statementInput.value, 18),
           dueDay: clampDay(dueInput.value, 12),
           minPaymentRate: Math.max(0, Number.parseFloat(minRateInput.value || '2')) / 100,
@@ -599,14 +859,50 @@ export function openAccountForm({ account = null, presetType }: AccountFormOptio
         });
       }
 
+      const limitCents = Math.abs(parseMoney(limitInput.value));
+
+      /**
+       * Apply the sharing choice to a card that now exists.
+       *
+       * Deliberately after the account itself is written: a brand-new card has
+       * no id to link until `addAccount` has given it one.
+       */
+      const applySharing = (state: AppState, cardId: string): AppState => {
+        if (!credit) return state;
+        if (sharedChoice === '') return actions.leaveSharedLimit(state, cardId);
+        if (sharedChoice.startsWith('card:')) {
+          return actions.shareLimitWith(state, cardId, sharedChoice.slice(5), { creditLimit: limitCents });
+        }
+        const limitId = sharedChoice.slice(6);
+        return actions.updateSharedLimit(
+          actions.joinSharedLimit(state, cardId, limitId),
+          limitId,
+          { creditLimit: limitCents },
+        );
+      };
+
       if (account) {
-        commit((s) => actions.updateAccount(s, account.id, patch), { label: 'edit account' });
+        commit((s) => applySharing(actions.updateAccount(s, account.id, patch), account.id), {
+          label: 'edit account',
+        });
         closeModal();
         undoToast('Account updated.');
       } else {
-        commit((s) => actions.addAccount(s, patch), { label: 'add account' });
+        commit(
+          (s) => {
+            const before = new Set(s.accounts.map((a) => a.id));
+            const next = actions.addAccount(s, patch);
+            const created = next.accounts.find((a) => !before.has(a.id));
+            return created ? applySharing(next, created.id) : next;
+          },
+          { label: 'add account' },
+        );
         closeModal();
-        undoToast(credit ? 'Card added — payment envelope created.' : 'Account added.');
+        undoToast(
+          credit ? 'Card added — payment envelope created.'
+            : loan ? 'Loan added — payment envelope created.'
+            : 'Account added.',
+        );
       }
     };
   };
@@ -838,4 +1134,161 @@ export function openFundCardForm(cardId: string, { month }: { month: MonthKey })
       }),
     ],
   });
+}
+
+/* ── Instalment plan ──────────────────────────────────────────────────── */
+
+export interface InstallmentFormOptions {
+  cardId: string;
+  installment?: Installment | null;
+  /** Prefilled when the plan was read off a statement row. */
+  draft?: Partial<Installment>;
+}
+
+/**
+ * Add or edit an instalment plan.
+ *
+ * The form asks for the monthly billing and the term rather than the purchase
+ * price, because those are the two figures the statement actually shows — and
+ * they are what the budget needs. The price is optional, and only earns its
+ * place by revealing what a "0%" plan really costs.
+ */
+export function openInstallmentForm({
+  cardId, installment = null, draft = {},
+}: InstallmentFormOptions): void {
+  const state = getState();
+  const card = state.accounts.find((a) => a.id === cardId);
+  if (!isCredit(card)) return;
+  const existing = installment;
+
+  const start = installment?.startMonth ?? draft.startMonth ?? currentMonth();
+  const descriptionInput = input({
+    value: installment?.description ?? draft.description ?? '',
+    placeholder: 'Appliance — SM Megamall',
+    required: true,
+  });
+  const monthlyInput = moneyInput({
+    value: centsToInput(installment?.monthlyAmount ?? draft.monthlyAmount ?? 0),
+    required: true,
+  });
+  const monthsInput = h<HTMLInputElement>('input.input', {
+    type: 'number', min: '2', max: '60', step: '1',
+    value: String(installment?.months ?? draft.months ?? 12),
+  });
+  const startInput = h<HTMLInputElement>('input.input', { type: 'month', value: start });
+  const principalInput = moneyInput({
+    value: installment?.principal ? centsToInput(installment.principal) : '',
+    placeholder: 'Optional',
+  });
+
+  const summarySlot = h('div.hint-slot');
+  const renderSummary = (): void => {
+    const monthly = Math.abs(parseMoney(monthlyInput.value));
+    const months = Math.max(0, Number.parseInt(monthsInput.value, 10) || 0);
+    const principal = Math.abs(parseMoney(principalInput.value));
+    if (!monthly || !months) {
+      mount(summarySlot);
+      return;
+    }
+    const total = monthly * months;
+    const cost = principal ? total - principal : null;
+    mount(
+      summarySlot,
+      h(
+        'div.inline-note',
+        null,
+        icon('info', { size: 16 }),
+        h('p', {
+          text:
+            `${months} × ${formatMoney(monthly, money())} is ${formatMoney(total, money())} in total` +
+            (cost == null
+              ? ', ending ' + monthLabel(addMonths(startInput.value || start, months - 1), money().locale) + '.'
+              : cost > 0
+                ? `, which is ${formatMoney(cost, money())} more than the ${formatMoney(principal, money())} price — not 0%.`
+                : `, the same as the ${formatMoney(principal, money())} price. A genuine 0% plan.`),
+        }),
+      ),
+    );
+  };
+  for (const control of [monthlyInput, monthsInput, principalInput, startInput]) {
+    control.addEventListener('input', renderSummary);
+  }
+  renderSummary();
+
+  const errorSlot = h('div.form-error-slot');
+  const body = h(
+    'form.form',
+    { onsubmit: (event: Event) => event.preventDefault() },
+    field('What was bought', descriptionInput, { id: 'inst-what' }),
+    h(
+      'div.form-grid',
+      null,
+      field('Billed each month', monthlyInput, { id: 'inst-monthly' }),
+      field('Number of months', monthsInput, { id: 'inst-months' }),
+    ),
+    h(
+      'div.form-grid',
+      null,
+      field('First instalment', startInput, {
+        id: 'inst-start',
+        hint: 'The month the first one was billed.',
+      }),
+      field('Purchase price', principalInput, {
+        id: 'inst-principal',
+        hint: 'Optional — reveals what the plan costs.',
+      }),
+    ),
+    summarySlot,
+    h('div.inline-note', null, icon('info', { size: 16 }), h('p', {
+      text: 'Tracking a plan does not create any transactions. Each month\u2019s instalment still arrives as an ordinary charge — this is here so you can see what is still to come.',
+    })),
+    errorSlot,
+  );
+
+  const submit = h('button.btn.btn-primary', {
+    type: 'button',
+    text: existing ? 'Save changes' : 'Track plan',
+    onclick: () => {
+      const description = descriptionInput.value.trim();
+      const monthlyAmount = Math.abs(parseMoney(monthlyInput.value));
+      const months = Math.max(0, Number.parseInt(monthsInput.value, 10) || 0);
+      if (!description || !monthlyAmount || months < 2) {
+        mount(errorSlot, h('p.form-error', null, icon('alert', { size: 15 }), h('span', {
+          text: 'A plan needs a description, a monthly amount and at least two months.',
+        })));
+        return;
+      }
+      const patch: Partial<Installment> = {
+        accountId: cardId,
+        description,
+        monthlyAmount,
+        months,
+        startMonth: startInput.value || currentMonth(),
+        principal: Math.abs(parseMoney(principalInput.value)) || null,
+      };
+      if (existing) commit((s) => actions.updateInstallment(s, existing.id, patch), { label: 'edit plan' });
+      else commit((s) => actions.addInstallment(s, patch), { label: 'track plan' });
+      closeModal();
+      undoToast(existing ? 'Plan updated.' : 'Plan tracked.');
+    },
+  });
+
+  const footer: Child[] = [
+    existing
+      ? h('button.btn.btn-danger-ghost', {
+          type: 'button',
+          text: 'Stop tracking',
+          onclick: () => {
+            commit((s) => actions.deleteInstallment(s, existing.id), { label: 'delete plan' });
+            closeModal();
+            undoToast('Plan removed. The charges it billed are untouched.');
+          },
+        })
+      : null,
+    h('div.foot-spacer'),
+    h('button.btn', { type: 'button', text: 'Cancel', onclick: closeModal }),
+    submit,
+  ];
+
+  openModal({ title: existing ? 'Edit instalment plan' : `Instalment plan on ${card.name}`, body, footer });
 }

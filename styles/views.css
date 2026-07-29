@@ -674,11 +674,18 @@
   font-size: var(--fs-xs);
 }
 
+/*
+ * The minimum column is wide enough for a six-figure amount with cents. At
+ * 7rem a peso balance like $30,000.00 overflowed its cell and ran into the
+ * figure beside it, because a grid item defaults to `min-width: auto` and so
+ * refuses to shrink below its content — auto-fit then keeps four columns that
+ * no longer fit. A wider minimum reflows to two rows instead.
+ */
 .credit-card-figures,
 .cycle-figures,
 .payoff-figures {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
   gap: var(--sp-3);
   margin: var(--sp-3) 0;
 }
@@ -687,6 +694,7 @@
   display: flex;
   flex-direction: column;
   gap: 1px;
+  min-width: 0;
 }
 
 .figure-label {
@@ -1590,4 +1598,85 @@
   .import-date { width: 100%; }
   .import-amount-group { margin-left: 0; width: 100%; }
   .import-amount { flex: 1; width: auto; }
+}
+
+/* ── Shared credit limit ────────────────────────────────────────────── */
+
+.shared-limit {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--radius-sm);
+  border: 1px dashed var(--border);
+}
+
+.shared-limit-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+.shared-limit-head .icon {
+  flex: none;
+  color: var(--accent);
+}
+
+.shared-limit-detail {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+
+/* ── Instalment plans ───────────────────────────────────────────────── */
+
+.installment-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  margin-top: var(--sp-3);
+}
+
+.installment-row.is-finished {
+  opacity: 0.6;
+}
+
+.installment-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  margin-bottom: 4px;
+}
+
+.installment-name {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 3px;
+}
+
+.installment-name:hover,
+.installment-name:focus-visible {
+  text-decoration-color: currentColor;
+}
+
+.installment-amount {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.installment-meta {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
 }

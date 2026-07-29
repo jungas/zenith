@@ -10,7 +10,7 @@ dependency.
 ```bash
 npm install
 npm start         # builds, then serves http://localhost:4173
-npm test          # type-checks, then runs 126 tests
+npm test          # type-checks, then runs 178 tests
 npm run typecheck # types only
 npm run build     # dist/*.js + sw.js, stamped with a shell version
 npm run icons     # regenerate the app icons
@@ -49,6 +49,29 @@ with $2,000 set aside is a payment method. A $2,000 balance with $760 set aside
 is $1,240 of debt that will start accruing interest — and Zenith says so, in
 those words, with the monthly interest cost attached.
 
+### The same wiring carries loans
+
+A loan is the mirror image of a card. A card's balance grows when you spend, and
+its payment envelope fills itself as you do; a **loan's** balance only falls, and
+its envelope has to be filled deliberately — month by month, before the due date.
+
+What they share is the part that matters: paying either one moves cash out of an
+asset account into a liability, so both own a payment envelope and both draw it
+down when paid. Without one, cash would leave with no envelope falling to match
+it, and the identity below would not hold.
+
+Money already owed on a loan is not income, exactly as a card's opening balance
+is not: it moves the account's balance without ever having been money you could
+budget. Borrowed cash that actually lands in your chequing account *is* income,
+because it is real money you can now assign — the loan account records the
+matching liability.
+
+A loan carries what it needs to plan around: the amount borrowed, the monthly
+amortisation, the term, the due day, and the rate. From those it reports where it
+is (*1 of 48 paid*), what is left to pay, and what the whole thing costs — 48 ×
+₱12,000 against ₱500,000 borrowed is ₱76,000 of interest. Payments due lists it
+beside the cards, because missing a loan payment costs more than missing a card's.
+
 ### The invariant
 
 Because reserves cancel the debt that created them, the whole system collapses to
@@ -58,8 +81,22 @@ one identity, checked live in Settings → **Budget integrity**:
 readyToAssign + Σ available  ===  Σ cash in asset accounts
 ```
 
-Card debt does not appear in it. That is the point: every envelope balance is
+Debt does not appear in it. That is the point: every envelope balance is
 backed by real money sitting in a real account.
+
+Two kinds of movement are **deliberately uncategorised**, and neither disturbs it:
+
+- **Moving money between your own accounts** — chequing to savings, a wallet
+  top-up. Nothing was spent, so no envelope changes and the total you hold is
+  unchanged. Both legs carry no category, and should not.
+- **Spending with no envelope behind it** is the opposite case: the cash has
+  gone. It comes straight out of Ready to assign, which is the pool of money that
+  has not been given a job yet. Leaving it out — which an earlier version did —
+  made cash fall while the budget went on claiming the money was still there, and
+  the integrity check would report a gap it could not explain.
+
+  The same charge on a *credit card* moves no cash, so it does not touch Ready to
+  assign; it simply grows the balance.
 
 The one thing with no reserve behind it is debt that **predates** the budget. It
 moves a card's balance without ever having been income, so it drops out of the
@@ -75,11 +112,11 @@ debt case that a naïve version of the identity gets wrong.)
 |---|---|
 | **Home** | Ready-to-assign hero, cash vs card debt, per-card coverage, payments due, envelopes closest to the limit, spending mix, recent activity |
 | **Budget** | Month-by-month envelope table with inline assigning, rollover, overspend flags, move-money, 3-month-average suggestions — and card payment envelopes in their own group with a **Reserved** column |
-| **Cards** | Per card: balance, utilisation band, available credit, statement balance, minimum payment, statement/due dates, funding coverage, interest cost |
+| **Cards** | Per card: balance, utilisation band, available credit, statement balance, minimum payment, statement/due dates, funding coverage, interest cost — with limits shared across cards from one bank |
 | **Card detail** | Statement-cycle timeline, a plain-language walkthrough of the budget connection, and a payoff planner (amortisation, total interest, months saved vs paying the minimum) |
 | **Ledger** | One searchable list across every account, filterable by account, category and month |
 | **Reports** | Income vs spending, spending by category, card debt over time, savings rate — 3/6/12-month ranges |
-| **Accounts** | Net worth, cash, debt, per-account balances — chequing, savings, cash, digital wallets and cards |
+| **Accounts** | Net worth, cash, debt, per-account balances — chequing, savings, cash, digital wallets, cards and loans |
 | **Import** | Read a PDF statement — including a password-protected one — and turn it into transactions, with every row reviewable before anything is saved |
 | **Settings** | Currency (26, including PHP) and locale, theme, utilisation warning threshold, payment reminders, install, JSON backup import/export, CSV export, statement import, sample data, integrity check |
 
@@ -92,6 +129,52 @@ full keyboard navigation, and a focus-trapped dialog.
   computed *as of the last close*, so the statement figure excludes charges made
   after it. A due date of the 31st clamps to the last day of a short month
   instead of rolling into the next.
+- **Shared credit limits** — a bank that issues you a second card usually does
+  not extend a second limit: it hands you two cards drawing on the same one. Put
+  them on a shared limit and utilisation, available credit and the portfolio
+  total are all measured against the combined balance, so spending on either
+  card correctly reduces what the other can use.
+
+  **Only cards from the same bank can share a limit.** A shared limit is
+  something an issuer grants across its own products, so the group carries the
+  bank and every member has to match it. The rule lives in the actions rather
+  than only in the form, because a form cannot guard a hand-edited backup — one
+  spanning two issuers is repaired on import. Change a card's bank and it leaves
+  the group; leave a group with one card and it dissolves, handing the limit back
+  to the survivor rather than taking the figure with it.
+
+  What is shared is the *limit*, not the debt: each card keeps its own balance,
+  statement, due date, minimum payment and payment envelope.
+
+- **Interest rates are quoted the way the issuer quotes them.** Philippine banks
+  state a **monthly** rate — a BDO statement says 3.5%, and BSP words its own
+  ceiling as "3% per month, 36% per annum" — while most other markets quote an
+  annual APR. The card form takes either, with the unit beside the figure, and
+  says what it works out to: *3.50% a month is 42.00% a year*. Internally `apr`
+  is always annual so every projection has one basis, and changing the unit
+  **relabels** what you typed rather than converting it, because someone copying
+  a figure off a statement means "this number is monthly", not "rewrite my
+  number".
+
+- **Instalment plans** — ubiquitous in the Philippines: a ₱24,000 appliance
+  becomes `3/12` on the statement, the third of twelve monthly billings. What
+  the statement shows is the instalment; what you have committed to is the whole
+  remaining run of them, and that is the part a budget needs to see coming.
+
+  A tracked plan says what is still to be billed and when it stops — *4 of 12
+  billed · ₱33,332.80 left · ends March 2027* — and the card leads with the
+  figure a budget actually asks for: how much of next month's bill is already
+  decided. Progress is **derived from the calendar**, not stored, so nothing has
+  to be advanced by hand and nothing is wrong the month somebody forgets.
+
+  **Tracking a plan creates no transactions.** Each month's instalment already
+  reaches the ledger as an ordinary charge, typed in or imported; generating
+  them here would bill every purchase twice. A plan is a schedule of what is
+  still to come, not a second copy of what has happened.
+
+  Give it the purchase price and it will also say what the plan costs — a "0%"
+  plan that bills ₱26,400 for a ₱24,000 purchase is not 0%.
+
 - **Minimum payment** — `max(floor, rate × balance)`, never more than the balance.
 - **Payoff planner** — amortises at a chosen monthly payment and reports months,
   total interest and what paying more than the minimum saves. A payment that
@@ -301,6 +384,61 @@ runs the reconciliation identity against every one of these shapes.
 A payment with no source account chosen is **skipped rather than approximated**.
 The money came out of somewhere, and guessing where would unbalance that account.
 
+### Instalments are recognised
+
+A row reading `INSTALLMENT - APPLIANCE 3/12` says two things: ₱4,166.60 was
+billed this month, and it will be billed nine more times. The import offers to
+track the second half, deriving the term and the start month from the marker —
+the third of twelve on a June statement began in April — so a plan is
+recoverable from *any* statement, not only the one that started it.
+
+A bare `3/12` is only read as an instalment when the row says it is one.
+`PAYMENT 06/18` is a date, and it reads perfectly well as "the sixth of
+eighteen"; numbers alone cannot separate the two, and inventing a nine-month
+commitment out of a date is a worse failure than missing one. `3 of 12` is
+unambiguous and needs no such wording.
+
+### Moving money is not spending
+
+Nothing on a statement distinguishes money you spent from money you moved to
+your own other account — `TRANSFER TO SAVINGS` looks exactly like a purchase. So
+any row can be switched to a **transfer**, which asks for the account on the
+other side and records the linked pair.
+
+It matters more than it looks. Imported as spending, a transfer overstates what
+you spent, and with no envelope behind it the amount comes out of Ready to
+assign. Imported as a transfer it is correctly uncategorised and changes nothing
+but where the money sits. A transfer with no account chosen on the other side is
+**skipped rather than approximated**, for the same reason a card payment is.
+
+### It checks its own work
+
+A statement states what you owe. After an import, the card should agree with it
+— so the review screen says whether it will:
+
+> **Balances match** — importing these rows leaves BDO Gold owing ₱9,843.23,
+> exactly what the statement says.
+
+When it does not, the gap is named along with its most likely cause. There is
+one mistake that is very easy to make and hard to spot afterwards: adding a card
+asks for the balance owed *today*, and taking that figure from the statement you
+are about to import means the starting balance **already contains every row on
+it**. Importing then counts the same spending twice, and the card ends up wrong
+by exactly the net movement of the statement.
+
+> **₱1,722.78 out** — importing these rows leaves BDO Gold owing ₱11,566.01 as
+> of 18 Jun 2026, but the statement says ₱9,843.23.
+>
+> The gap is exactly what these rows add up to, so the card's starting balance
+> most likely already includes them.
+>
+> [ Set the starting balance to ₱8,120.45 ]
+
+The figure offered is the one that makes the two agree — which, for a statement
+whose own numbers add up, is its previous balance. Nothing is corrected
+automatically: an opening balance is a number someone entered on purpose, and
+rewriting it silently would be worse than the discrepancy.
+
 ### Nothing is saved until you say so
 
 The parse produces *proposals*. Every row is shown with its date, payee,
@@ -336,6 +474,8 @@ src/
     reminders.ts      which notifications a budget earns, and on what day
     actions.ts        state transitions (pure: state → state)
     seed.ts           deterministic sample data
+    installments.ts   monthly instalment plans: what is left, and when it stops
+    loans.ts          loan balances, progress, monthly commitment and payoff cost
     statement.ts      reading a bank statement's lines into candidate rows
     statement-import.ts  those rows as transactions, deduped against the ledger
     pdf/              a dependency-free PDF reader — inflate, crypto, objects,

@@ -30,7 +30,8 @@ export type MonthKey = string;
 export const SCHEMA_VERSION = 1;
 
 export type AssetAccountType = 'checking' | 'savings' | 'cash' | 'wallet';
-export type AccountType = AssetAccountType | 'credit';
+export type DebtAccountType = 'credit' | 'loan';
+export type AccountType = AssetAccountType | DebtAccountType;
 export type TxKind = 'expense' | 'income' | 'transfer' | 'adjustment';
 export type CategoryKind = 'spending' | 'ccPayment';
 export type ThemePreference = 'system' | 'light' | 'dark';
@@ -47,7 +48,18 @@ export const ACCOUNT_TYPES = {
   cash: { label: 'Cash', asset: true },
   wallet: { label: 'Digital wallet', asset: true },
   credit: { label: 'Credit card', asset: false },
+  loan: { label: 'Loan', asset: false },
 } as const satisfies Record<AccountType, { label: string; asset: boolean }>;
+
+/**
+ * Loan kinds worth naming, Philippine ones first. A label only — the maths is
+ * the same whatever the loan is for.
+ */
+export const LOAN_KINDS = [
+  'Personal loan', 'Auto loan', 'Housing loan', 'Pag-IBIG housing loan',
+  'SSS salary loan', 'GSIS loan', 'Salary loan', 'Business loan',
+  'Student loan', 'Motorcycle loan', 'Appliance loan',
+] as const;
 
 /**
  * A digital wallet holds real money you can spend, so it is an asset account
@@ -111,24 +123,139 @@ export interface AssetAccount extends AccountBase {
 
 export interface CreditAccount extends AccountBase {
   type: 'credit';
+  /**
+   * This card's own limit. Ignored while `sharedLimitId` is set — the shared
+   * limit is the real one then — but kept, so leaving a group restores it.
+   */
   creditLimit: Cents;
-  /** Annual percentage rate as a decimal: 0.1999 for 19.99%. */
+  /**
+   * Annual percentage rate as a decimal: 0.1999 for 19.99%. Always stored
+   * annually, whatever unit it was entered in — see `rateBasis`.
+   */
   apr: number;
+  /**
+   * How the issuer quotes this card's rate.
+   *
+   * Philippine banks state a **monthly** rate — a statement says "3.5%", and
+   * BSP's own cap is worded as "3% per month, 36% per annum". Storing the unit
+   * lets the app show the figure that is printed on the statement instead of
+   * one the cardholder has to convert in their head, while `apr` stays annual
+   * so every calculation has a single basis. Absent means annual.
+   */
+  rateBasis?: 'annual' | 'monthly';
   statementDay: number;
   dueDay: number;
   /** Minimum payment = max(minPaymentFloor, minPaymentRate × balance). */
   minPaymentRate: number;
   minPaymentFloor: Cents;
+  /** The shared credit limit this card draws on, if any. */
+  sharedLimitId?: string | null;
+}
+
+/**
+ * One credit limit shared by several cards.
+ *
+ * A bank that issues you a second card usually does not extend a second limit:
+ * it hands you two cards that draw on the same one, so spending on either eats
+ * the other's available credit. Treating them as two independent limits
+ * overstates what you can spend by exactly the size of the limit, and understates
+ * utilisation — the number credit scoring actually looks at.
+ *
+ * **Membership is restricted to one bank.** A shared limit is something an
+ * issuer grants across its own products; two banks cannot share one, so the
+ * group carries the bank and every member has to match it.
+ */
+export interface SharedLimit {
+  id: string;
+  /** Display name — defaults to the bank's, but a person may have two of these. */
+  name: string;
+  /** The issuing bank. Every member card's `provider` must equal this. */
+  provider: string;
+  /** The one limit the member cards draw on together. */
+  creditLimit: Cents;
+}
+
+/**
+ * A purchase converted into fixed monthly billings on a card.
+ *
+ * Ubiquitous in the Philippines: a ₱24,000 appliance becomes "3/12" on the
+ * statement — the third of twelve monthly instalments. What the statement shows
+ * is the instalment, but what you have committed to is the whole remaining run
+ * of them, and that is the part a budget needs to see coming. Nine more months
+ * of ₱2,000 is a fact about next year's budget, not a surprise to meet monthly.
+ *
+ * Tracking a plan **creates no transactions**. Each month's instalment already
+ * arrives as an ordinary charge — typed in or imported from the statement — and
+ * generating them here would bill everything twice. A plan is a schedule of
+ * what is still to come, not a second copy of what has happened.
+ */
+export interface Installment {
+  id: string;
+  /** The credit card being billed. */
+  accountId: string;
+  description: string;
+  /** What is billed each month. */
+  monthlyAmount: Cents;
+  /** How many monthly instalments the plan runs for. */
+  months: number;
+  /** The month the first instalment was billed. */
+  startMonth: MonthKey;
+  /**
+   * The purchase price, when known. A plan billing more than this in total is
+   * not 0% however it was sold, and the difference is what it costs.
+   */
+  principal: Cents | null;
+  note: string;
+}
+
+/**
+ * Money borrowed and repaid in fixed monthly amounts.
+ *
+ * Unlike a card, a loan is not spent on: the principal arrives once and the
+ * balance only falls. What it needs from the budget is the opposite of a card's
+ * — not a reserve that grows with spending, but a monthly amount set aside
+ * before the due date. It gets a payment envelope for exactly that reason, and
+ * for one more: paying a loan moves cash out of an asset account into a
+ * liability, and without an envelope to draw down, the identity in
+ * `core/budget.ts` would not hold.
+ */
+export interface LoanAccount extends AccountBase {
+  type: 'loan';
+  /** What was borrowed. */
+  principal: Cents;
+  /** Annual rate as a decimal, however it was quoted — see `rateBasis`. */
+  apr: number;
+  rateBasis?: 'annual' | 'monthly';
+  /** The fixed monthly amortisation. */
+  monthlyPayment: Cents;
+  /** How many monthly payments the loan runs for. */
+  termMonths: number;
+  /** Day of the month the payment falls due. */
+  dueDay: number;
+  /** The month the first payment was due. */
+  startMonth: MonthKey;
+  /** What the loan is for: 'Auto loan', 'Pag-IBIG housing loan'. */
+  kind?: string;
 }
 
 /**
  * A discriminated union, so the card-only terms cannot be read off a chequing
  * account without narrowing through `isCredit` first.
  */
-export type Account = AssetAccount | CreditAccount;
+export type Account = AssetAccount | CreditAccount | LoanAccount;
 
 export const isCredit = (account: Account | null | undefined): account is CreditAccount =>
   account?.type === 'credit';
+
+export const isLoan = (account: Account | null | undefined): account is LoanAccount =>
+  account?.type === 'loan';
+
+/**
+ * Anything owed. Both kinds carry a payment envelope and stay out of
+ * `cashOnHand`; what differs is how the balance gets there.
+ */
+export const isDebt = (account: Account | null | undefined): account is CreditAccount | LoanAccount =>
+  isCredit(account) || isLoan(account);
 
 export const isAsset = (account: Account | null | undefined): account is AssetAccount =>
   account != null && ACCOUNT_TYPES[account.type]?.asset === true;
@@ -209,6 +336,10 @@ export interface AppState {
   categories: Category[];
   budgets: Budgets;
   transactions: Transaction[];
+  /** Credit limits shared by two or more cards from the same bank. */
+  sharedLimits: SharedLimit[];
+  /** Purchases being billed in fixed monthly instalments. */
+  installments: Installment[];
 }
 
 /** Currency/locale pair threaded through every formatting call. */
@@ -244,10 +375,23 @@ const CREDIT_DEFAULTS = {
   dueDay: 21,
   minPaymentRate: 0.02,
   minPaymentFloor: 2500,
+  sharedLimitId: null,
+  rateBasis: 'annual',
 } as const;
 
-/** What callers may pass to `makeAccount`; card terms are ignored for non-cards. */
-export type AccountDraft = Partial<Omit<CreditAccount, 'type'>> & { type?: AccountType };
+const LOAN_DEFAULTS = {
+  principal: 0,
+  apr: 0,
+  rateBasis: 'annual',
+  monthlyPayment: 0,
+  termMonths: 0,
+  dueDay: 5,
+  startMonth: '',
+} as const;
+
+/** What callers may pass to `makeAccount`; terms are ignored for other types. */
+export type AccountDraft = Partial<Omit<CreditAccount, 'type'>> &
+  Partial<Omit<LoanAccount, 'type'>> & { type?: AccountType };
 
 export function makeAccount(patch: AccountDraft = {}): Account {
   const type: AccountType = patch.type && patch.type in ACCOUNT_TYPES ? patch.type : 'checking';
@@ -261,15 +405,49 @@ export function makeAccount(patch: AccountDraft = {}): Account {
     sort: 0,
   };
   if (type === 'credit') {
-    return { ...base, ...CREDIT_DEFAULTS, ...patch, type: 'credit' };
+    const { principal: _p, monthlyPayment: _mp, termMonths: _tm, startMonth: _sm, kind: _k, ...card } = patch;
+    return { ...base, ...CREDIT_DEFAULTS, ...card, type: 'credit' };
+  }
+  if (type === 'loan') {
+    const {
+      creditLimit: _cl, statementDay: _sd, minPaymentRate: _mr, minPaymentFloor: _mf,
+      sharedLimitId: _sl, ...loan
+    } = patch;
+    return { ...base, ...LOAN_DEFAULTS, ...loan, type: 'loan' };
   }
   // Drop any card terms a caller passed for a non-card account, so an asset
   // account can never carry a stale credit limit.
   const {
     creditLimit: _limit, apr: _apr, statementDay: _statement, dueDay: _due,
-    minPaymentRate: _rate, minPaymentFloor: _floor, ...rest
+    minPaymentRate: _rate, minPaymentFloor: _floor, sharedLimitId: _shared,
+    rateBasis: _basis, principal: _principal, monthlyPayment: _monthly,
+    termMonths: _term, startMonth: _start, kind: _kind, ...rest
   } = patch;
   return { ...base, ...rest, type };
+}
+
+export function makeSharedLimit(patch: Partial<SharedLimit> = {}): SharedLimit {
+  return {
+    id: newId('slim'),
+    name: 'Shared limit',
+    provider: '',
+    creditLimit: 0,
+    ...patch,
+  };
+}
+
+export function makeInstallment(patch: Partial<Installment> = {}): Installment {
+  return {
+    id: newId('inst'),
+    accountId: '',
+    description: 'Instalment plan',
+    monthlyAmount: 0,
+    months: 0,
+    startMonth: '',
+    principal: null,
+    note: '',
+    ...patch,
+  };
 }
 
 export function makeCategory(patch: Partial<Category> = {}): Category {
@@ -318,6 +496,8 @@ export function emptyState(now: Date = new Date()): AppState {
     categories: [],
     budgets: {},
     transactions: [],
+    sharedLimits: [],
+    installments: [],
   };
 }
 
@@ -327,14 +507,15 @@ export function paymentCategoryFor(state: AppState, accountId: string): Category
 }
 
 /**
- * Every credit account owns exactly one payment category. This is the hinge
+ * Every debt account owns exactly one payment category. This is the hinge
  * between the two halves of the app: card spending funds this envelope, and
- * paying the card spends it back down.
+ * paying the card spends it back down. A loan uses the same envelope for the
+ * other direction — you budget into it monthly, and the payment draws it down.
  */
 export function ensurePaymentCategories(state: AppState): AppState {
   const next: AppState = { ...state, categories: [...state.categories] };
   for (const account of next.accounts) {
-    if (!isCredit(account) || account.archived) continue;
+    if (!isDebt(account) || account.archived) continue;
     const existing = next.categories.find(
       (c) => c.kind === 'ccPayment' && c.accountId === account.id,
     );
@@ -349,7 +530,7 @@ export function ensurePaymentCategories(state: AppState): AppState {
     next.categories.push(
       makeCategory({
         name: account.name,
-        group: 'Credit card payments',
+        group: isLoan(account) ? 'Loan payments' : 'Credit card payments',
         kind: 'ccPayment',
         accountId: account.id,
         color: 'series-8',
@@ -358,6 +539,68 @@ export function ensurePaymentCategories(state: AppState): AppState {
     );
   }
   return next;
+}
+
+/* ── Shared credit limits ─────────────────────────────────────────────── */
+
+export function sharedLimitById(state: AppState, id: string | null | undefined): SharedLimit | null {
+  if (!id) return null;
+  return state.sharedLimits?.find((limit) => limit.id === id) ?? null;
+}
+
+/** The shared limit a card draws on, or null when it has its own. */
+export function sharedLimitFor(state: AppState, card: Account | null | undefined): SharedLimit | null {
+  if (!isCredit(card)) return null;
+  return sharedLimitById(state, card.sharedLimitId);
+}
+
+/** Every card drawing on a shared limit, in display order. */
+export function sharedLimitMembers(state: AppState, limitId: string): CreditAccount[] {
+  return state.accounts
+    .filter((a): a is CreditAccount => isCredit(a) && a.sharedLimitId === limitId)
+    .sort((a, b) => a.sort - b.sort || a.name.localeCompare(b.name));
+}
+
+/** The other cards on the same limit as this one. */
+export function sharedLimitSiblings(state: AppState, card: CreditAccount): CreditAccount[] {
+  if (!card.sharedLimitId) return [];
+  return sharedLimitMembers(state, card.sharedLimitId).filter((other) => other.id !== card.id);
+}
+
+/** Bank names compare case- and spacing-insensitively: "BPI " is "bpi". */
+export const sameBank = (a: string | undefined, b: string | undefined): boolean =>
+  (a ?? '').trim().toLowerCase() === (b ?? '').trim().toLowerCase();
+
+/**
+ * May this card join that shared limit?
+ *
+ * The rule is the bank's: an issuer shares a limit across its own cards, so a
+ * card can only join a group carrying the same `provider`. A card with no bank
+ * recorded cannot join anything, because there is nothing to check it against.
+ */
+export function canJoinSharedLimit(
+  state: AppState,
+  card: Account | null | undefined,
+  limitId: string,
+): boolean {
+  if (!isCredit(card)) return false;
+  const limit = sharedLimitById(state, limitId);
+  if (!limit) return false;
+  return Boolean(card.provider?.trim()) && sameBank(card.provider, limit.provider);
+}
+
+/** The shared limits this card is eligible to join, by its bank. */
+export function eligibleSharedLimits(state: AppState, card: Account | null | undefined): SharedLimit[] {
+  if (!isCredit(card) || !card.provider?.trim()) return [];
+  return (state.sharedLimits ?? []).filter((limit) => sameBank(limit.provider, card.provider));
+}
+
+/**
+ * The limit a card actually draws on: the shared one when it is in a group,
+ * its own otherwise. Every utilisation figure in the app goes through this.
+ */
+export function effectiveCreditLimit(state: AppState, card: CreditAccount): Cents {
+  return sharedLimitFor(state, card)?.creditLimit ?? card.creditLimit ?? 0;
 }
 
 export function categoriesById(state: AppState): Map<string, Category> {
@@ -378,10 +621,14 @@ export function categoryGroups(
     if (bucket) bucket.push(category);
     else groups.set(category.group, [category]);
   }
-  // Card payments always sit last — they are funded by the groups above them.
+  // Debt payments always sit last — they are funded by the groups above them.
+  const debtGroups = ['Loan payments', 'Credit card payments'];
   return [...groups.entries()].sort(([a], [b]) => {
-    if (a === 'Credit card payments') return 1;
-    if (b === 'Credit card payments') return -1;
+    const left = debtGroups.indexOf(a);
+    const right = debtGroups.indexOf(b);
+    if (left >= 0 && right >= 0) return left - right;
+    if (left >= 0) return 1;
+    if (right >= 0) return -1;
     return 0;
   });
 }
