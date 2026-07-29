@@ -104,8 +104,17 @@ export function append<T extends Node>(parent: T, ...children: Child[]): T {
   return parent;
 }
 
+/**
+ * Empty a node.
+ *
+ * `firstChild.remove()` rather than `parent.removeChild(child)`: a re-render
+ * triggered from inside a `blur` or `change` handler can have the browser move
+ * focus — and the node — between reading the child and removing it, and
+ * `removeChild` throws when the two no longer agree on who the parent is.
+ * Self-removal cannot disagree.
+ */
 export function clear<T extends Node>(node: T): T {
-  while (node.firstChild) node.removeChild(node.firstChild);
+  while (node.firstChild) (node.firstChild as ChildNode).remove();
   return node;
 }
 

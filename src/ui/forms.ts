@@ -10,10 +10,11 @@ import { parseMoney, centsToInput, formatMoney } from '../core/money.ts';
 import { todayISO } from '../core/dates.ts';
 import {
   ACCOUNT_TYPES, CARD_ISSUERS, CATEGORY_COLORS, isCredit, isWallet, paymentCategoryFor,
-  WALLET_PROVIDERS,
+  sameBank, sharedLimitFor, sharedLimitMembers, WALLET_PROVIDERS,
 } from '../core/model.ts';
 import type {
-  Account, AccountType, Category, Cents, ISODate, MonthKey, SeriesColor, Transaction, TxKind,
+  Account, AccountType, Category, Cents, CreditAccount, ISODate, MonthKey, SeriesColor,
+  Transaction, TxKind,
 } from '../core/model.ts';
 import { cardSnapshot, type CardSnapshot } from '../core/cards.ts';
 import { commit, getState, moneyOpts, undo } from '../store.ts';
@@ -459,6 +460,25 @@ export function openAccountForm({ account = null, presetType }: AccountFormOptio
   const errorSlot = h('div.form-error-slot');
   const nameInput = input({ value: account?.name ?? '', placeholder: 'Everyday Checking', required: true });
 
+  /**
+   * Which limit this card draws on: '' for its own, `card:<id>` to share with a
+   * card that has no group yet, `limit:<id>` to join an existing one. Held out
+   * here because choosing it re-renders the form, and a value that lived inside
+   * `render` would be thrown away by the render it triggers.
+   */
+  let sharedChoice = isCredit(account) && account.sharedLimitId ? `limit:${account.sharedLimitId}` : '';
+  /** The limit figure, likewise preserved across those re-renders. */
+  let limitDraft = isCredit(account) && account.creditLimit ? centsToInput(account.creditLimit) : '';
+  if (isCredit(account)) {
+    const joined = sharedLimitFor(getState(), account);
+    if (joined) limitDraft = centsToInput(joined.creditLimit);
+  }
+  /** The bank as currently typed, which decides who this card may share with. */
+  let providerDraft = existing?.provider ?? '';
+  /** Whether the rate is being entered per year or per month. */
+  let rateBasis: 'annual' | 'monthly' =
+    isCredit(account) && account.rateBasis === 'monthly' ? 'monthly' : 'annual';
+
   const render = (): void => {
     const credit = type === 'credit';
     const wallet = type === 'wallet';
@@ -466,10 +486,20 @@ export function openAccountForm({ account = null, presetType }: AccountFormOptio
     // issuing bank. They are the same fact — who runs the account — so they
     // share `provider` rather than growing a second nearly-identical column.
     const providerInput = input({
-      value: existing?.provider ?? '',
+      value: providerDraft,
       placeholder: credit ? 'BPI' : 'GCash',
       list: credit ? 'card-issuers' : 'wallet-providers',
       autocomplete: 'off',
+      oninput: (event: Event) => {
+        providerDraft = (event.target as HTMLInputElement).value;
+      },
+      // Who this card may share a limit with depends entirely on the bank, so
+      // just that field is rebuilt once this one settles. Re-rendering the whole
+      // form from inside a change handler would tear out the element currently
+      // losing focus.
+      onchange: () => {
+        if (credit) mount(sharedSlot, sharedLimitField());
+      },
     });
     const openingInput = moneyInput({
       value: account ? centsToInput(account.openingBalance) : '',
@@ -479,12 +509,58 @@ export function openAccountForm({ account = null, presetType }: AccountFormOptio
 
     // Card terms only exist on a card, so read them through the narrowed value.
     const terms = isCredit(account) ? account : null;
-    const limitInput = moneyInput({ value: terms?.creditLimit ? centsToInput(terms.creditLimit) : '' });
+    const limitInput = moneyInput({
+      value: limitDraft,
+      oninput: (event: Event) => {
+        limitDraft = (event.target as HTMLInputElement).value;
+      },
+    });
+    // Philippine banks quote a monthly rate — a BDO statement says 3.5%, not
+    // 42% — so the unit is part of the field rather than something to convert
+    // in your head. `apr` is stored annually either way.
+    const shownRate = terms?.apr
+      ? (rateBasis === 'monthly' ? (terms.apr / 12) * 100 : terms.apr * 100)
+      : null;
     const aprInput = h<HTMLInputElement>('input.input', {
       type: 'number', step: '0.01', min: '0', max: '99',
-      value: terms?.apr ? (terms.apr * 100).toFixed(2) : '',
-      placeholder: '19.99',
+      value: shownRate == null ? '' : shownRate.toFixed(2),
+      placeholder: rateBasis === 'monthly' ? '3.50' : '19.99',
+      oninput: () => renderRateHint(),
     });
+    aprInput.id = 'acct-apr';
+    const rateBasisSelect = select(
+      [
+        { value: 'annual', label: 'per year', selected: rateBasis === 'annual' },
+        { value: 'monthly', label: 'per month', selected: rateBasis === 'monthly' },
+      ],
+      {
+        class: 'input rate-basis',
+        'aria-label': 'Rate period',
+        onchange: (event: Event) => {
+          // The typed digits are left exactly as they are. Someone copying a
+          // figure off a statement and then setting the unit means "this number
+          // is monthly", not "convert my number" — rewriting 3.5 to 0.29 under
+          // them would be a change they did not ask for and might not notice.
+          // The hint below states the equivalent immediately instead.
+          rateBasis = (event.target as HTMLSelectElement).value === 'monthly' ? 'monthly' : 'annual';
+          aprInput.placeholder = rateBasis === 'monthly' ? '3.50' : '19.99';
+          renderRateHint();
+        },
+      },
+    );
+    const rateHint = h('span.field-hint');
+    const renderRateHint = (): void => {
+      const typed = Number.parseFloat(aprInput.value || '0');
+      if (!Number.isFinite(typed) || !typed) {
+        rateHint.textContent = 'Used for interest projections.';
+        return;
+      }
+      rateHint.textContent =
+        rateBasis === 'monthly'
+          ? `${typed.toFixed(2)}% a month is ${(typed * 12).toFixed(2)}% a year.`
+          : `${typed.toFixed(2)}% a year is ${(typed / 12).toFixed(2)}% a month.`;
+    };
+    renderRateHint();
     const statementInput = h<HTMLInputElement>('input.input', {
       type: 'number', min: '1', max: '31', value: terms?.statementDay ?? 18,
     });
@@ -496,6 +572,99 @@ export function openAccountForm({ account = null, presetType }: AccountFormOptio
       value: ((terms?.minPaymentRate ?? 0.02) * 100).toFixed(1),
     });
     const minFloorInput = moneyInput({ value: centsToInput(terms?.minPaymentFloor ?? 2500) });
+
+    /**
+     * Who this card shares its limit with.
+     *
+     * A shared limit only exists within one bank, so the options are drawn from
+     * cards carrying the same `provider` — and with no bank typed there is
+     * nothing to draw from, which the hint says rather than showing an empty
+     * list. Existing groups are named by the cards on them, because that is how
+     * someone recognises which limit is which.
+     */
+    const sharedLimitField = (): HTMLElement | null => {
+      if (!credit) return null;
+      const state = getState();
+      const bank = providerDraft.trim();
+
+      if (!bank) {
+        return h(
+          'div.inline-note',
+          null,
+          icon('info', { size: 16 }),
+          h('p', {
+            text: 'Some banks issue two cards that draw on one limit. Name the issuing bank above and Zenith can link them.',
+          }),
+        );
+      }
+
+      const sameBankCards = state.accounts.filter(
+        (a): a is CreditAccount => isCredit(a) && !a.archived && a.id !== account?.id && sameBank(a.provider, bank),
+      );
+      const groups = (state.sharedLimits ?? []).filter((limit) => sameBank(limit.provider, bank));
+
+      if (!sameBankCards.length && !groups.length) {
+        return h(
+          'div.inline-note',
+          null,
+          icon('info', { size: 16 }),
+          h('p', {
+            text: `This is your only ${bank} card. Add a second one and you can put them both on a single shared limit.`,
+          }),
+        );
+      }
+
+      const options: SelectOption[] = [
+        { value: '', label: 'It has its own limit', selected: sharedChoice === '' },
+      ];
+      for (const limit of groups) {
+        const names = sharedLimitMembers(state, limit.id)
+          .filter((member) => member.id !== account?.id)
+          .map((member) => member.name)
+          .join(' + ');
+        options.push({
+          value: `limit:${limit.id}`,
+          label: names ? `Shared with ${names}` : limit.name,
+          selected: sharedChoice === `limit:${limit.id}`,
+        });
+      }
+      for (const other of sameBankCards) {
+        if (other.sharedLimitId) continue; // already offered as a group above
+        options.push({
+          value: `card:${other.id}`,
+          label: `Shared with ${other.name}`,
+          selected: sharedChoice === `card:${other.id}`,
+        });
+      }
+
+      return field(
+        'Credit limit is',
+        select(options, {
+          onchange: (event: Event) => {
+            sharedChoice = (event.target as HTMLSelectElement).value;
+            paintLimitLabel();
+          },
+        }),
+        {
+          id: 'acct-shared',
+          hint: `Only ${bank} cards can share a limit — a shared limit is one the bank granted across its own cards.`,
+        },
+      );
+    };
+    const limitLabel = h('span.field-label');
+    const limitHint = h('span.field-hint');
+    const paintLimitLabel = (): void => {
+      const sharing = sharedChoice !== '';
+      limitLabel.textContent = sharing ? 'Shared credit limit' : 'Credit limit';
+      limitHint.textContent = sharing
+        ? 'One limit for every card sharing it — changing it here changes it for all of them.'
+        : '';
+    };
+    paintLimitLabel();
+    limitInput.id = 'acct-limit';
+
+    const sharedSlot = h('div');
+    if (credit) mount(sharedSlot, sharedLimitField());
 
     mount(
       body,
@@ -549,9 +718,22 @@ export function openAccountForm({ account = null, presetType }: AccountFormOptio
             h(
               'div.form-grid',
               null,
-              field('Credit limit', limitInput, { id: 'acct-limit' }),
-              field('APR %', aprInput, { id: 'acct-apr', hint: 'Used for interest projections' }),
+              h(
+                'label.field',
+                { for: 'acct-limit' },
+                limitLabel,
+                limitInput,
+                limitHint,
+              ),
+              h(
+                'label.field',
+                { for: 'acct-apr' },
+                h('span.field-label', { text: 'Interest rate %' }),
+                h('div.rate-row', null, aprInput, rateBasisSelect),
+                rateHint,
+              ),
             ),
+            sharedSlot,
             h(
               'div.form-grid',
               null,
@@ -589,9 +771,12 @@ export function openAccountForm({ account = null, presetType }: AccountFormOptio
         ...(wallet || credit ? { provider: providerInput.value.trim() } : {}),
       };
       if (credit) {
+        const typedRate = Math.max(0, Number.parseFloat(aprInput.value || '0')) / 100;
         Object.assign(patch, {
           creditLimit: Math.abs(parseMoney(limitInput.value)),
-          apr: Math.max(0, Number.parseFloat(aprInput.value || '0')) / 100,
+          // Stored annually whatever was typed, so every projection has one basis.
+          apr: rateBasis === 'monthly' ? typedRate * 12 : typedRate,
+          rateBasis,
           statementDay: clampDay(statementInput.value, 18),
           dueDay: clampDay(dueInput.value, 12),
           minPaymentRate: Math.max(0, Number.parseFloat(minRateInput.value || '2')) / 100,
@@ -599,12 +784,44 @@ export function openAccountForm({ account = null, presetType }: AccountFormOptio
         });
       }
 
+      const limitCents = Math.abs(parseMoney(limitInput.value));
+
+      /**
+       * Apply the sharing choice to a card that now exists.
+       *
+       * Deliberately after the account itself is written: a brand-new card has
+       * no id to link until `addAccount` has given it one.
+       */
+      const applySharing = (state: AppState, cardId: string): AppState => {
+        if (!credit) return state;
+        if (sharedChoice === '') return actions.leaveSharedLimit(state, cardId);
+        if (sharedChoice.startsWith('card:')) {
+          return actions.shareLimitWith(state, cardId, sharedChoice.slice(5), { creditLimit: limitCents });
+        }
+        const limitId = sharedChoice.slice(6);
+        return actions.updateSharedLimit(
+          actions.joinSharedLimit(state, cardId, limitId),
+          limitId,
+          { creditLimit: limitCents },
+        );
+      };
+
       if (account) {
-        commit((s) => actions.updateAccount(s, account.id, patch), { label: 'edit account' });
+        commit((s) => applySharing(actions.updateAccount(s, account.id, patch), account.id), {
+          label: 'edit account',
+        });
         closeModal();
         undoToast('Account updated.');
       } else {
-        commit((s) => actions.addAccount(s, patch), { label: 'add account' });
+        commit(
+          (s) => {
+            const before = new Set(s.accounts.map((a) => a.id));
+            const next = actions.addAccount(s, patch);
+            const created = next.accounts.find((a) => !before.has(a.id));
+            return created ? applySharing(next, created.id) : next;
+          },
+          { label: 'add account' },
+        );
         closeModal();
         undoToast(credit ? 'Card added — payment envelope created.' : 'Account added.');
       }

@@ -15,13 +15,82 @@ import { openAccountForm, openPaymentForm, openFundCardForm, openTransactionForm
 import { formatMoney, formatPercent, parseMoney, centsToInput } from '../core/money.ts';
 import { currentMonth, formatDate, formatDateShort, monthLabel, relativeDays } from '../core/dates.ts';
 import { queryTransactions } from '../core/budget.ts';
-import { cardSnapshot, creditAccounts, debtSummary, payoffComparison } from '../core/cards.ts';
+import {
+  cardBalance, cardSnapshot, creditAccounts, debtSummary, payoffComparison, quotedRate,
+} from '../core/cards.ts';
 import { getState, moneyOpts } from '../store.ts';
 import { navigate } from '../router.ts';
 import { transactionRow } from './transactions.ts';
 import type { Cents, CreditAccount, MonthKey, MoneyOptions } from '../core/model.ts';
 import { isCredit } from '../core/model.ts';
 import type { CardSnapshot } from '../core/cards.ts';
+
+/**
+ * The shared limit broken down by card.
+ *
+ * Shown because the single most confusing thing about a shared limit is that
+ * this card's available credit moves when you have not touched it. Listing
+ * every card's balance against the one limit makes that arithmetic visible
+ * rather than surprising.
+ */
+function sharedLimitPanel(
+  snap: CardSnapshot,
+  money: Required<Pick<MoneyOptions, 'currency' | 'locale'>>,
+): HTMLElement {
+  const state = getState();
+  const limit = snap.sharedLimit;
+  if (!limit) return h('div');
+  const members = [snap.card, ...snap.siblings];
+
+  return h(
+    'section.card.block',
+    null,
+    h('h3.card-title', { text: 'Shared credit limit' }),
+    h('p.card-text', {
+      text: `${limit.provider} gave these cards one limit of ${formatMoney(limit.creditLimit, money)} between them. Spending on any of them reduces what the others can use.`,
+    }),
+    h(
+      'ul.mini-list',
+      { role: 'list' },
+      members.map((member) => {
+        const owed = cardBalance(state, member.id);
+        return h(
+          'li.mini-row',
+          null,
+          h('span.mini-name', { text: member.name }),
+          h('span.mini-meta', { text: member.id === snap.card.id ? 'this card' : '' }),
+          h('span.money', { text: formatMoney(owed, money) }),
+        );
+      }),
+    ),
+    h(
+      'ul.integrity-list',
+      { role: 'list' },
+      h('li.integrity-row', null,
+        h('span', { text: 'Used across all cards' }),
+        h('span.integrity-value', { text: formatMoney(snap.limitBalance, money) }),
+      ),
+      h('li.integrity-row.is-total', null,
+        h('span', { text: 'Left on the shared limit' }),
+        h('span.integrity-value', { text: formatMoney(snap.availableCredit, money) }),
+      ),
+    ),
+  );
+}
+
+/**
+ * The interest rate as the card's issuer quotes it — monthly for Philippine
+ * banks, annually elsewhere — so the figure here matches the statement.
+ */
+function rateLabel(card: CreditAccount): string {
+  if (!card.apr) return 'rate not set';
+  const { rate, basis } = quotedRate(card);
+  return basis === 'monthly' ? `${formatPercent(rate, 2)} monthly` : `${formatPercent(rate, 2)} APR`;
+}
+
+/** How many distinct shared limits the cards draw on. */
+const sharedCount = (debt: { cards: CardSnapshot[] }): number =>
+  new Set(debt.cards.map((snap) => snap.sharedLimit?.id).filter(Boolean)).size;
 
 /* ── List ─────────────────────────────────────────────────────────────── */
 
@@ -79,7 +148,9 @@ export function cardsView({ month = currentMonth() }: { month?: MonthKey } = {})
       statTile({
         label: 'Overall utilisation',
         value: debt.utilization == null ? '—' : formatPercent(debt.utilization),
-        hint: debt.limit ? `of ${formatMoney(debt.limit, { ...money, cents: false })} in limits` : 'No limits set',
+        hint: debt.limit
+          ? `of ${formatMoney(debt.limit, { ...money, cents: false })} in limits${sharedCount(debt) ? ', shared limits counted once' : ''}`
+          : 'No limits set',
         tone: debt.band.status === 'good' ? 'good' : debt.band.status,
       }),
       statTile({
@@ -96,6 +167,35 @@ export function cardsView({ month = currentMonth() }: { month?: MonthKey } = {})
   append(root, list);
 
   return root;
+}
+
+/**
+ * What a shared limit means for this card, in the plainest words available:
+ * the other cards eat the same allowance, so the headroom shown is the group's.
+ */
+function sharedLimitNote(
+  snap: CardSnapshot,
+  money: Required<Pick<MoneyOptions, 'currency' | 'locale'>>,
+): HTMLElement {
+  const others = snap.siblings.map((card) => card.name).join(', ');
+  const ownShare = snap.balance;
+  const rest = snap.limitBalance - ownShare;
+  return h(
+    'div.shared-limit',
+    null,
+    h(
+      'p.shared-limit-head',
+      null,
+      icon('link', { size: 15 }),
+      h('span', { text: `Shares one ${formatMoney(snap.creditLimit, { ...money, cents: false })} limit with ${others}` }),
+    ),
+    h('p.shared-limit-detail', {
+      text:
+        rest > 0
+          ? `${formatMoney(ownShare, money)} on this card and ${formatMoney(rest, money)} on the other${snap.siblings.length === 1 ? '' : 's'} — ${formatMoney(snap.availableCredit, money)} left between them.`
+          : `${formatMoney(ownShare, money)} used of the shared limit — ${formatMoney(snap.availableCredit, money)} left between them.`,
+    }),
+  );
 }
 
 function fullCard(snap: CardSnapshot, money: Required<Pick<MoneyOptions, 'currency' | 'locale'>>, month: MonthKey): HTMLElement {
@@ -129,7 +229,7 @@ function fullCard(snap: CardSnapshot, money: Required<Pick<MoneyOptions, 'curren
           h('p.credit-card-terms', {
             text: [
               card.provider,
-              card.apr ? `${formatPercent(card.apr, 2)} APR` : 'APR not set',
+              rateLabel(card),
               `closes ${ordinal(card.statementDay)}`,
               `due ${ordinal(card.dueDay)}`,
             ]
@@ -157,9 +257,15 @@ function fullCard(snap: CardSnapshot, money: Required<Pick<MoneyOptions, 'curren
       caption:
         snap.utilization == null
           ? 'Set a limit to track this'
-          : `${formatPercent(snap.utilization)} of ${formatMoney(card.creditLimit, { ...money, cents: false })}`,
+          : snap.sharedLimit
+            // Say whose balance is in the figure, because it is not only this
+            // card's — and an unexplained number that moves when you spend
+            // elsewhere looks like a bug.
+            ? `${formatPercent(snap.utilization)} of a ${formatMoney(snap.creditLimit, { ...money, cents: false })} limit shared with ${snap.siblings.map((s) => s.name).join(', ')}`
+            : `${formatPercent(snap.utilization)} of ${formatMoney(snap.creditLimit, { ...money, cents: false })}`,
       ariaLabel: `${card.name} utilisation`,
     }),
+    snap.sharedLimit ? sharedLimitNote(snap, money) : null,
 
     /* The connection, stated plainly. */
     h(
@@ -312,8 +418,10 @@ export function cardDetailView(
     sectionHeader(card.name, {
       subtitle: [
         card.provider,
-        card.apr ? `${formatPercent(card.apr, 2)} APR` : 'APR not set',
-        `limit ${formatMoney(card.creditLimit, { ...money, cents: false })}`,
+        rateLabel(card),
+        snap.sharedLimit
+          ? `${formatMoney(snap.creditLimit, { ...money, cents: false })} limit, shared`
+          : `limit ${formatMoney(snap.creditLimit, { ...money, cents: false })}`,
         `statement closes ${ordinal(card.statementDay)}, due ${ordinal(card.dueDay)}`,
       ]
         .filter(Boolean)
@@ -339,7 +447,7 @@ export function cardDetailView(
         label: 'Utilisation',
         value: snap.utilization == null ? '—' : formatPercent(snap.utilization),
         tone: snap.band.status === 'good' ? 'good' : snap.band.status,
-        hint: snap.band.label,
+        hint: snap.sharedLimit ? `${snap.band.label} · across shared limit` : snap.band.label,
       }),
       statTile({
         label: 'Next payment due',
@@ -349,6 +457,9 @@ export function cardDetailView(
       }),
     ),
   );
+
+  /* What the shared limit is doing, card by card. */
+  if (snap.sharedLimit) append(root, sharedLimitPanel(snap, money));
 
   /* Statement cycle explainer. */
   append(

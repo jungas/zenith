@@ -6,9 +6,12 @@
 
 import { addDays, currentMonth, daysBetween, monthOf, nextDayOfMonth, parseISO, todayISO, toISO } from './dates.ts';
 import { accountBalance, categoryRow, monthSummary, ledgerTransactions } from './budget.ts';
-import { isCredit, paymentCategoryFor } from './model.ts';
+import {
+  effectiveCreditLimit, isCredit, paymentCategoryFor, sharedLimitFor, sharedLimitMembers,
+  sharedLimitSiblings,
+} from './model.ts';
 import type {
-  AppState, Category, Cents, CreditAccount, ISODate, MonthKey,
+  AppState, Category, Cents, CreditAccount, ISODate, MonthKey, SharedLimit,
 } from './model.ts';
 
 /** Health of a card's utilisation, carrying a word and an icon, never just a colour. */
@@ -41,6 +44,17 @@ export interface CardSnapshot {
   availableCredit: Cents;
   utilization: number | null;
   band: UtilizationBand;
+  /** The shared limit this card draws on, or null when the limit is its own. */
+  sharedLimit: SharedLimit | null;
+  /** The effective limit: the shared one when there is one, else the card's. */
+  creditLimit: Cents;
+  /**
+   * The balance the limit is measured against — this card's, or the combined
+   * balance of every card on the shared limit.
+   */
+  limitBalance: Cents;
+  /** The other cards drawing on the same limit. */
+  siblings: CreditAccount[];
   statementBalance: Cents;
   minimumPayment: Cents;
   cycle: StatementCycle;
@@ -98,18 +112,47 @@ export const creditAccounts = (
 ): CreditAccount[] =>
   state.accounts.filter((a): a is CreditAccount => isCredit(a) && (includeArchived || !a.archived));
 
-/** Amount owed on a card, returned positive. */
+/**
+ * Amount owed on a card, returned positive.
+ *
+ * The `|| 0` is not redundant: negating a zero balance yields `-0`, which
+ * compares unequal to `0` under `Object.is` and would surface as a difference
+ * where there is none.
+ */
 export function cardBalance(state: AppState, cardId: string, throughISO: ISODate | null = null): Cents {
-  return -accountBalance(state, cardId, throughISO);
+  return -accountBalance(state, cardId, throughISO) || 0;
 }
 
-export function availableCredit(card: CreditAccount, balanceOwed: Cents): Cents {
-  return Math.max(0, (card.creditLimit || 0) - balanceOwed);
+/**
+ * The balance a card's limit is measured against.
+ *
+ * For a card on a shared limit that is the *combined* balance of every card on
+ * it, because that is what the bank counts. Spending on a sibling card really
+ * does reduce what is left on this one, and reporting otherwise would tell you
+ * there is headroom the issuer will decline.
+ */
+export function limitBalance(state: AppState, card: CreditAccount): Cents {
+  const shared = sharedLimitFor(state, card);
+  if (!shared) return cardBalance(state, card.id);
+  return sharedLimitMembers(state, shared.id).reduce(
+    (total, member) => total + cardBalance(state, member.id),
+    0,
+  );
 }
 
-export function utilization(card: CreditAccount, balanceOwed: Cents): number | null {
-  if (!card.creditLimit) return null;
-  return balanceOwed / card.creditLimit;
+/** Available credit and utilisation, measured against whichever limit applies. */
+export function limitStanding(
+  state: AppState,
+  card: CreditAccount,
+): { limit: Cents; balance: Cents; available: Cents; ratio: number | null } {
+  const limit = effectiveCreditLimit(state, card);
+  const balance = limitBalance(state, card);
+  return {
+    limit,
+    balance,
+    available: Math.max(0, limit - balance),
+    ratio: limit ? balance / limit : null,
+  };
 }
 
 /**
@@ -183,7 +226,9 @@ export function cardSnapshot(
   const cycle = statementCycle(card, asOf);
   const statement = statementBalance(state, card, asOf);
   const minimum = minimumPayment(card, statement || balance);
-  const ratio = utilization(card, balance);
+  // Utilisation is measured against the shared limit when there is one, so a
+  // sibling card's spending shows up here as it does on the bank's own screen.
+  const standing = limitStanding(state, card);
 
   let spentThisMonth = 0;
   let paidThisMonth = 0;
@@ -203,9 +248,13 @@ export function cardSnapshot(
     uncovered,
     covered: uncovered === 0,
     coverageRatio: balance > 0 ? Math.min(1, reserved / balance) : 1,
-    availableCredit: availableCredit(card, balance),
-    utilization: ratio,
-    band: utilizationBand(ratio, state.settings?.utilizationWarn ?? 0.3),
+    availableCredit: standing.available,
+    utilization: standing.ratio,
+    band: utilizationBand(standing.ratio, state.settings?.utilizationWarn ?? 0.3),
+    sharedLimit: sharedLimitFor(state, card),
+    creditLimit: standing.limit,
+    limitBalance: standing.balance,
+    siblings: sharedLimitSiblings(state, card),
     statementBalance: statement,
     minimumPayment: minimum,
     cycle,
@@ -219,6 +268,27 @@ export function cardSnapshot(
 export function cardSnapshots(state: AppState, opts: SnapshotOptions = {}): CardSnapshot[] {
   return creditAccounts(state).map((card) => cardSnapshot(state, card, opts));
 }
+
+/**
+ * The rate in the unit the issuer quotes it in.
+ *
+ * `apr` is always annual internally, because every projection divides by twelve
+ * anyway — but a Philippine statement prints a monthly figure, and showing 42%
+ * to someone holding a statement that says 3.5% invites them to conclude the
+ * app is wrong.
+ *
+ * The conversion is the simple one, monthly × 12, which is how the rate is
+ * quoted in practice: BSP words its ceiling as "3% per month, 36% per annum"
+ * rather than the 42.6% that monthly compounding would give.
+ */
+export function quotedRate(card: CreditAccount): { rate: number; basis: 'annual' | 'monthly' } {
+  const basis = card.rateBasis === 'monthly' ? 'monthly' : 'annual';
+  return { rate: basis === 'monthly' ? (card.apr || 0) / 12 : card.apr || 0, basis };
+}
+
+/** Annual rate from a monthly one, and back. */
+export const annualFromMonthly = (monthly: number): number => monthly * 12;
+export const monthlyFromAnnual = (annual: number): number => annual / 12;
 
 export function monthlyInterest(balanceOwed: Cents, apr: number): Cents {
   if (balanceOwed <= 0 || !apr) return 0;
@@ -303,7 +373,19 @@ export function upcomingPayments(
 export function debtSummary(state: AppState, opts: SnapshotOptions = {}): DebtSummary {
   const snaps = cardSnapshots(state, opts);
   const balance = snaps.reduce((total, s) => total + s.balance, 0);
-  const limit = snaps.reduce((total, s) => total + (s.card.creditLimit || 0), 0);
+  // A shared limit counts once however many cards draw on it. Summing each
+  // card's own figure would report twice the credit the bank actually gave.
+  const counted = new Set<string>();
+  let limit = 0;
+  for (const snap of snaps) {
+    if (snap.sharedLimit) {
+      if (counted.has(snap.sharedLimit.id)) continue;
+      counted.add(snap.sharedLimit.id);
+      limit += snap.sharedLimit.creditLimit || 0;
+    } else {
+      limit += snap.card.creditLimit || 0;
+    }
+  }
   const reserved = snaps.reduce((total, s) => total + s.reserved, 0);
   const uncovered = snaps.reduce((total, s) => total + s.uncovered, 0);
   const monthlyInterestCost = snaps.reduce((total, s) => total + s.monthlyInterestCost, 0);

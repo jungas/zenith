@@ -111,14 +111,56 @@ export interface AssetAccount extends AccountBase {
 
 export interface CreditAccount extends AccountBase {
   type: 'credit';
+  /**
+   * This card's own limit. Ignored while `sharedLimitId` is set — the shared
+   * limit is the real one then — but kept, so leaving a group restores it.
+   */
   creditLimit: Cents;
-  /** Annual percentage rate as a decimal: 0.1999 for 19.99%. */
+  /**
+   * Annual percentage rate as a decimal: 0.1999 for 19.99%. Always stored
+   * annually, whatever unit it was entered in — see `rateBasis`.
+   */
   apr: number;
+  /**
+   * How the issuer quotes this card's rate.
+   *
+   * Philippine banks state a **monthly** rate — a statement says "3.5%", and
+   * BSP's own cap is worded as "3% per month, 36% per annum". Storing the unit
+   * lets the app show the figure that is printed on the statement instead of
+   * one the cardholder has to convert in their head, while `apr` stays annual
+   * so every calculation has a single basis. Absent means annual.
+   */
+  rateBasis?: 'annual' | 'monthly';
   statementDay: number;
   dueDay: number;
   /** Minimum payment = max(minPaymentFloor, minPaymentRate × balance). */
   minPaymentRate: number;
   minPaymentFloor: Cents;
+  /** The shared credit limit this card draws on, if any. */
+  sharedLimitId?: string | null;
+}
+
+/**
+ * One credit limit shared by several cards.
+ *
+ * A bank that issues you a second card usually does not extend a second limit:
+ * it hands you two cards that draw on the same one, so spending on either eats
+ * the other's available credit. Treating them as two independent limits
+ * overstates what you can spend by exactly the size of the limit, and understates
+ * utilisation — the number credit scoring actually looks at.
+ *
+ * **Membership is restricted to one bank.** A shared limit is something an
+ * issuer grants across its own products; two banks cannot share one, so the
+ * group carries the bank and every member has to match it.
+ */
+export interface SharedLimit {
+  id: string;
+  /** Display name — defaults to the bank's, but a person may have two of these. */
+  name: string;
+  /** The issuing bank. Every member card's `provider` must equal this. */
+  provider: string;
+  /** The one limit the member cards draw on together. */
+  creditLimit: Cents;
 }
 
 /**
@@ -209,6 +251,8 @@ export interface AppState {
   categories: Category[];
   budgets: Budgets;
   transactions: Transaction[];
+  /** Credit limits shared by two or more cards from the same bank. */
+  sharedLimits: SharedLimit[];
 }
 
 /** Currency/locale pair threaded through every formatting call. */
@@ -244,6 +288,8 @@ const CREDIT_DEFAULTS = {
   dueDay: 21,
   minPaymentRate: 0.02,
   minPaymentFloor: 2500,
+  sharedLimitId: null,
+  rateBasis: 'annual',
 } as const;
 
 /** What callers may pass to `makeAccount`; card terms are ignored for non-cards. */
@@ -267,9 +313,20 @@ export function makeAccount(patch: AccountDraft = {}): Account {
   // account can never carry a stale credit limit.
   const {
     creditLimit: _limit, apr: _apr, statementDay: _statement, dueDay: _due,
-    minPaymentRate: _rate, minPaymentFloor: _floor, ...rest
+    minPaymentRate: _rate, minPaymentFloor: _floor, sharedLimitId: _shared,
+    rateBasis: _basis, ...rest
   } = patch;
   return { ...base, ...rest, type };
+}
+
+export function makeSharedLimit(patch: Partial<SharedLimit> = {}): SharedLimit {
+  return {
+    id: newId('slim'),
+    name: 'Shared limit',
+    provider: '',
+    creditLimit: 0,
+    ...patch,
+  };
 }
 
 export function makeCategory(patch: Partial<Category> = {}): Category {
@@ -318,6 +375,7 @@ export function emptyState(now: Date = new Date()): AppState {
     categories: [],
     budgets: {},
     transactions: [],
+    sharedLimits: [],
   };
 }
 
@@ -358,6 +416,68 @@ export function ensurePaymentCategories(state: AppState): AppState {
     );
   }
   return next;
+}
+
+/* ── Shared credit limits ─────────────────────────────────────────────── */
+
+export function sharedLimitById(state: AppState, id: string | null | undefined): SharedLimit | null {
+  if (!id) return null;
+  return state.sharedLimits?.find((limit) => limit.id === id) ?? null;
+}
+
+/** The shared limit a card draws on, or null when it has its own. */
+export function sharedLimitFor(state: AppState, card: Account | null | undefined): SharedLimit | null {
+  if (!isCredit(card)) return null;
+  return sharedLimitById(state, card.sharedLimitId);
+}
+
+/** Every card drawing on a shared limit, in display order. */
+export function sharedLimitMembers(state: AppState, limitId: string): CreditAccount[] {
+  return state.accounts
+    .filter((a): a is CreditAccount => isCredit(a) && a.sharedLimitId === limitId)
+    .sort((a, b) => a.sort - b.sort || a.name.localeCompare(b.name));
+}
+
+/** The other cards on the same limit as this one. */
+export function sharedLimitSiblings(state: AppState, card: CreditAccount): CreditAccount[] {
+  if (!card.sharedLimitId) return [];
+  return sharedLimitMembers(state, card.sharedLimitId).filter((other) => other.id !== card.id);
+}
+
+/** Bank names compare case- and spacing-insensitively: "BPI " is "bpi". */
+export const sameBank = (a: string | undefined, b: string | undefined): boolean =>
+  (a ?? '').trim().toLowerCase() === (b ?? '').trim().toLowerCase();
+
+/**
+ * May this card join that shared limit?
+ *
+ * The rule is the bank's: an issuer shares a limit across its own cards, so a
+ * card can only join a group carrying the same `provider`. A card with no bank
+ * recorded cannot join anything, because there is nothing to check it against.
+ */
+export function canJoinSharedLimit(
+  state: AppState,
+  card: Account | null | undefined,
+  limitId: string,
+): boolean {
+  if (!isCredit(card)) return false;
+  const limit = sharedLimitById(state, limitId);
+  if (!limit) return false;
+  return Boolean(card.provider?.trim()) && sameBank(card.provider, limit.provider);
+}
+
+/** The shared limits this card is eligible to join, by its bank. */
+export function eligibleSharedLimits(state: AppState, card: Account | null | undefined): SharedLimit[] {
+  if (!isCredit(card) || !card.provider?.trim()) return [];
+  return (state.sharedLimits ?? []).filter((limit) => sameBank(limit.provider, card.provider));
+}
+
+/**
+ * The limit a card actually draws on: the shared one when it is in a group,
+ * its own otherwise. Every utilisation figure in the app goes through this.
+ */
+export function effectiveCreditLimit(state: AppState, card: CreditAccount): Cents {
+  return sharedLimitFor(state, card)?.creditLimit ?? card.creditLimit ?? 0;
 }
 
 export function categoriesById(state: AppState): Map<string, Category> {

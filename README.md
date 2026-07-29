@@ -10,7 +10,7 @@ dependency.
 ```bash
 npm install
 npm start         # builds, then serves http://localhost:4173
-npm test          # type-checks, then runs 126 tests
+npm test          # type-checks, then runs 144 tests
 npm run typecheck # types only
 npm run build     # dist/*.js + sw.js, stamped with a shell version
 npm run icons     # regenerate the app icons
@@ -75,7 +75,7 @@ debt case that a naïve version of the identity gets wrong.)
 |---|---|
 | **Home** | Ready-to-assign hero, cash vs card debt, per-card coverage, payments due, envelopes closest to the limit, spending mix, recent activity |
 | **Budget** | Month-by-month envelope table with inline assigning, rollover, overspend flags, move-money, 3-month-average suggestions — and card payment envelopes in their own group with a **Reserved** column |
-| **Cards** | Per card: balance, utilisation band, available credit, statement balance, minimum payment, statement/due dates, funding coverage, interest cost |
+| **Cards** | Per card: balance, utilisation band, available credit, statement balance, minimum payment, statement/due dates, funding coverage, interest cost — with limits shared across cards from one bank |
 | **Card detail** | Statement-cycle timeline, a plain-language walkthrough of the budget connection, and a payoff planner (amortisation, total interest, months saved vs paying the minimum) |
 | **Ledger** | One searchable list across every account, filterable by account, category and month |
 | **Reports** | Income vs spending, spending by category, card debt over time, savings rate — 3/6/12-month ranges |
@@ -92,6 +92,33 @@ full keyboard navigation, and a focus-trapped dialog.
   computed *as of the last close*, so the statement figure excludes charges made
   after it. A due date of the 31st clamps to the last day of a short month
   instead of rolling into the next.
+- **Shared credit limits** — a bank that issues you a second card usually does
+  not extend a second limit: it hands you two cards drawing on the same one. Put
+  them on a shared limit and utilisation, available credit and the portfolio
+  total are all measured against the combined balance, so spending on either
+  card correctly reduces what the other can use.
+
+  **Only cards from the same bank can share a limit.** A shared limit is
+  something an issuer grants across its own products, so the group carries the
+  bank and every member has to match it. The rule lives in the actions rather
+  than only in the form, because a form cannot guard a hand-edited backup — one
+  spanning two issuers is repaired on import. Change a card's bank and it leaves
+  the group; leave a group with one card and it dissolves, handing the limit back
+  to the survivor rather than taking the figure with it.
+
+  What is shared is the *limit*, not the debt: each card keeps its own balance,
+  statement, due date, minimum payment and payment envelope.
+
+- **Interest rates are quoted the way the issuer quotes them.** Philippine banks
+  state a **monthly** rate — a BDO statement says 3.5%, and BSP words its own
+  ceiling as "3% per month, 36% per annum" — while most other markets quote an
+  annual APR. The card form takes either, with the unit beside the figure, and
+  says what it works out to: *3.50% a month is 42.00% a year*. Internally `apr`
+  is always annual so every projection has one basis, and changing the unit
+  **relabels** what you typed rather than converting it, because someone copying
+  a figure off a statement means "this number is monthly", not "rewrite my
+  number".
+
 - **Minimum payment** — `max(floor, rate × balance)`, never more than the balance.
 - **Payoff planner** — amortises at a chosen monthly payment and reports months,
   total interest and what paying more than the minimum saves. A payment that

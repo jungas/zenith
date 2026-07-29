@@ -8,6 +8,7 @@
  */
 
 import { emptyState, ensurePaymentCategories, SCHEMA_VERSION } from './core/model.ts';
+import { tidySharedLimits } from './core/actions.ts';
 import type { AppState, MoneyOptions, Settings } from './core/model.ts';
 
 /** A state transition: takes the current state, returns the next one. */
@@ -56,8 +57,9 @@ function migrate(parsed: Partial<AppState>): AppState {
     categories: Array.isArray(parsed.categories) ? parsed.categories : [],
     transactions: Array.isArray(parsed.transactions) ? parsed.transactions : [],
     budgets: parsed.budgets && typeof parsed.budgets === 'object' ? parsed.budgets : {},
+    sharedLimits: Array.isArray(parsed.sharedLimits) ? parsed.sharedLimits : [],
   };
-  return ensurePaymentCategories(next);
+  return tidySharedLimits(ensurePaymentCategories(next));
 }
 
 /**

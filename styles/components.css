@@ -1124,3 +1124,25 @@ select.input {
   flex-wrap: wrap;
   justify-content: center;
 }
+
+/*
+ * An interest rate is a number and a period together — Philippine banks quote
+ * per month, most others per year — so the unit sits in the field beside the
+ * figure rather than being assumed by the label.
+ */
+.rate-row {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: center;
+}
+
+.rate-row .input:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.rate-basis {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 7.5rem;
+}
