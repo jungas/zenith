@@ -8,7 +8,7 @@ import { currentMonth } from './core/dates.ts';
 import { getState, subscribe, onPersistError, canUndo, undo, lastUndoLabel } from './store.ts';
 import { defineRoutes, startRouter, getRoute } from './router.ts';
 import type { ActiveRoute, RouteDefinition } from './router.ts';
-import { initPwa, onPwaChange, installState, promptInstall } from './pwa.ts';
+import { initPwa, onPwaChange, installState, promptInstall, applyUpdate } from './pwa.ts';
 import { initReminders } from './reminders.ts';
 import type { IconName } from './ui/icons.ts';
 import { isEmbedded } from './core/model.ts';
@@ -124,6 +124,17 @@ function renderChrome(): void {
       null,
       !pwa.online
         ? h('span.chip.chip-offline', null, icon('info', { size: 14 }), h('span', { text: 'Offline' }))
+        : null,
+      // An update outranks everything else in the header: the app is running
+      // code the user has already been told is out of date, and a toast they
+      // may not have seen is otherwise the only way back.
+      pwa.updateReady
+        ? h(
+            'button.btn.btn-sm.btn-primary',
+            { type: 'button', onclick: () => applyUpdate(), title: 'Reload to use the new version' },
+            icon('undo', { size: 15 }),
+            h('span', { text: 'Update' }),
+          )
         : null,
       pwa.canPrompt && !pwa.installed
         ? h(

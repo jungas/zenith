@@ -22,7 +22,9 @@ import { queryTransactions } from '../core/budget.ts';
 import {
   cardBalance, cardSnapshot, creditAccounts, debtSummary, payoffComparison, quotedRate,
 } from '../core/cards.ts';
-import { getState, moneyOpts } from '../store.ts';
+import * as actions from '../core/actions.ts';
+import { commit, getState, moneyOpts, undo } from '../store.ts';
+import { toast } from '../ui/toast.ts';
 import { navigate } from '../router.ts';
 import { transactionRow } from './transactions.ts';
 import type { Cents, CreditAccount, MonthKey, MoneyOptions } from '../core/model.ts';
@@ -92,12 +94,37 @@ function installmentRow(
     h(
       'div.installment-head',
       null,
-      h('button.installment-name', {
-        type: 'button',
-        text: plan.description,
-        onclick: () => openInstallmentForm({ cardId: plan.accountId, installment: plan }),
-      }),
+      h('span.installment-name', { text: plan.description }),
       h('span.installment-amount', { text: `${formatMoney(plan.monthlyAmount, money)}/mo` }),
+      // Named buttons rather than a clickable title. The title was the only way
+      // in before, styled to underline on hover — which on a phone is no
+      // affordance at all, so a plan looked like something that could not be
+      // changed or removed.
+      h(
+        'div.installment-actions',
+        null,
+        h('button.icon-btn', {
+          type: 'button',
+          'aria-label': `Edit ${plan.description}`,
+          title: 'Edit this plan',
+          onclick: () => openInstallmentForm({ cardId: plan.accountId, installment: plan }),
+        }, icon('edit', { size: 16 })),
+        h('button.icon-btn', {
+          type: 'button',
+          'aria-label': `Stop tracking ${plan.description}`,
+          title: 'Stop tracking this plan',
+          // No confirmation: removing a plan destroys nothing — the charges it
+          // billed are ordinary transactions and stay put — and `u` undoes it.
+          // This app reserves confirmation for what cannot be taken back.
+          onclick: () => {
+            commit((s) => actions.deleteInstallment(s, plan.id), { label: 'stop tracking plan' });
+            toast('Plan removed. The charges it billed are untouched.', {
+              tone: 'success',
+              action: { label: 'Undo', onClick: () => undo() },
+            });
+          },
+        }, icon('trash', { size: 16 })),
+      ),
     ),
     meter({
       ratio: snapshot.progress,

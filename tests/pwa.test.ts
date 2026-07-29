@@ -194,3 +194,34 @@ test('the icon generator produces real PNGs', () => {
     assert.equal(bytes.readUInt32BE(20), expected, `${file} height`);
   }
 });
+
+/**
+ * An update the user is never offered is an update that never happens.
+ *
+ * The mechanism is DOM- and browser-bound, so what is checked here is the
+ * wiring rather than the behaviour: that the app keeps looking while it is
+ * open, and that a missed toast is not the only way through. Both were absent
+ * once — the only check ran at page load, and `updateReady` was consumed
+ * nowhere, so an app left open sat on an old version indefinitely.
+ */
+test('the app keeps checking for a new version while it is open', () => {
+  const pwa = read('src/pwa.ts');
+  assert.match(pwa, /registration\?\.update\(\)/, 'nothing asks for a new version');
+  assert.match(pwa, /visibilitychange/, 'no check when the app comes back to the foreground');
+  assert.match(pwa, /setInterval\(checkForUpdate/, 'no periodic check while it stays open');
+  // A worker that finished installing before this page loaded fires no
+  // `updatefound`, so it has to be looked for directly.
+  assert.match(pwa, /\.waiting/, 'an already-waiting worker would go unnoticed');
+});
+
+test('a waiting update is offered somewhere that outlives a toast', () => {
+  const consumers = globSync('src/**/*.ts', { cwd: ROOT })
+    .map((file) => file.replaceAll('\\', '/'))
+    .filter((file) => file !== 'src/pwa.ts')
+    .filter((file) => /\bupdateReady\b/.test(read(file)) && /applyUpdate/.test(read(file)));
+
+  assert.ok(
+    consumers.length > 0,
+    'no view offers a waiting update — a 12-second toast would be the only way to apply one',
+  );
+});

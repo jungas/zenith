@@ -14,7 +14,7 @@ import * as actions from '../core/actions.ts';
 import {
   clearAll, getState, moneyOpts, replaceState, updateSettings, commit,
 } from '../store.ts';
-import { installState, promptInstall } from '../pwa.ts';
+import { installState, promptInstall, applyUpdate, checkForUpdate } from '../pwa.ts';
 import {
   backgroundDeliverySupported, disableReminders, enableReminders, notificationPermission,
   notificationsSupported, sendTestNotification, setReminderSettings,
@@ -123,6 +123,26 @@ export function settingsView(): HTMLElement {
       'section.card.block',
       null,
       h('h3.card-title', { text: 'Install' }),
+      // Whether a new version is waiting, stated plainly. A toast lasts
+      // seconds; this is where someone comes looking afterwards.
+      !isEmbedded() && install.updateReady
+        ? h(
+            'div.block',
+            null,
+            h('p.card-text', null,
+              statusPill('good', 'Update ready', { size: 'sm' }),
+              h('span', { text: 'A new version has been downloaded and is ready to use.' }),
+            ),
+            h('div.button-row', null,
+              h(
+                'button.btn.btn-primary',
+                { type: 'button', onclick: () => applyUpdate() },
+                icon('undo', { size: 16 }),
+                h('span', { text: 'Reload to update' }),
+              ),
+            ),
+          )
+        : null,
       isEmbedded()
         ? h(
             'div',
@@ -135,7 +155,12 @@ export function settingsView(): HTMLElement {
             })),
           )
         : install.installed
-        ? h('p.card-text', null, statusPill('good', 'Installed', { size: 'sm' }), h('span', { text: 'Zenith is running as an installed app.' }))
+        ? h(
+            'div',
+            null,
+            h('p.card-text', null, statusPill('good', 'Installed', { size: 'sm' }), h('span', { text: 'Zenith is running as an installed app.' })),
+            checkForUpdateButton(install.updateReady),
+          )
         : h(
             'div',
             null,
@@ -152,6 +177,7 @@ export function settingsView(): HTMLElement {
               : h('p.muted-note', null, icon('info', { size: 15 }), h('span', {
                   text: 'Use your browser menu — “Install app”, or “Add to Home Screen” on iOS.',
                 })),
+            checkForUpdateButton(install.updateReady),
           ),
     ),
   );
@@ -572,6 +598,36 @@ function integrityRow(label: string, cents: Cents, money: Required<Pick<MoneyOpt
 
 function aboutRow(label: string, value: string): HTMLElement {
   return h('div.about-row', null, h('dt', { text: label }), h('dd', { text: value }));
+}
+
+/**
+ * Ask for a new version now.
+ *
+ * Zenith checks by itself when it is opened and while it is left open, so this
+ * is for the moment someone knows a change has shipped and does not want to
+ * wait for the next check.
+ */
+function checkForUpdateButton(updateReady: boolean): HTMLElement | null {
+  if (updateReady) return null;
+  return h(
+    'div.button-row.block',
+    null,
+    h(
+      'button.btn',
+      {
+        type: 'button',
+        onclick: () => {
+          checkForUpdate();
+          // There is nothing to report synchronously: if a new version exists,
+          // the header button and this section appear on their own once it has
+          // downloaded.
+          toast('Checking for a new version…', { tone: 'info' });
+        },
+      },
+      icon('spark', { size: 16 }),
+      h('span', { text: 'Check for updates' }),
+    ),
+  );
 }
 
 function todayStamp(): string {
