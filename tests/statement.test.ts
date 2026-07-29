@@ -47,8 +47,8 @@ test('BDO card statement', () => {
   assert.equal(parsed.summary.accountHint, '7788');
   assert.equal(parsed.summary.statementDate, '2026-06-18');
   assert.equal(parsed.summary.dueDate, '2026-07-08');
-  assert.equal(parsed.summary.totalDue, 2491820);
-  assert.equal(parsed.summary.minimumDue, 124591);
+  assert.equal(parsed.summary.totalDue, 984323);
+  assert.equal(parsed.summary.minimumDue, 49216);
   assert.equal(parsed.summary.previousBalance, 812045);
   assert.equal(parsed.summary.creditLimit, 20000000);
 

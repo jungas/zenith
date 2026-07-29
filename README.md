@@ -10,7 +10,7 @@ dependency.
 ```bash
 npm install
 npm start         # builds, then serves http://localhost:4173
-npm test          # type-checks, then runs 144 tests
+npm test          # type-checks, then runs 147 tests
 npm run typecheck # types only
 npm run build     # dist/*.js + sw.js, stamped with a shell version
 npm run icons     # regenerate the app icons
@@ -327,6 +327,34 @@ runs the reconciliation identity against every one of these shapes.
 
 A payment with no source account chosen is **skipped rather than approximated**.
 The money came out of somewhere, and guessing where would unbalance that account.
+
+### It checks its own work
+
+A statement states what you owe. After an import, the card should agree with it
+— so the review screen says whether it will:
+
+> **Balances match** — importing these rows leaves BDO Gold owing ₱9,843.23,
+> exactly what the statement says.
+
+When it does not, the gap is named along with its most likely cause. There is
+one mistake that is very easy to make and hard to spot afterwards: adding a card
+asks for the balance owed *today*, and taking that figure from the statement you
+are about to import means the starting balance **already contains every row on
+it**. Importing then counts the same spending twice, and the card ends up wrong
+by exactly the net movement of the statement.
+
+> **₱1,722.78 out** — importing these rows leaves BDO Gold owing ₱11,566.01 as
+> of 18 Jun 2026, but the statement says ₱9,843.23.
+>
+> The gap is exactly what these rows add up to, so the card's starting balance
+> most likely already includes them.
+>
+> [ Set the starting balance to ₱8,120.45 ]
+
+The figure offered is the one that makes the two agree — which, for a statement
+whose own numbers add up, is its previous balance. Nothing is corrected
+automatically: an opening balance is a number someone entered on purpose, and
+rewriting it silently would be worse than the discrepancy.
 
 ### Nothing is saved until you say so
 

@@ -23,6 +23,7 @@
  */
 
 import { addTransaction, addTransfer } from './actions.ts';
+import { cardBalance } from './cards.ts';
 import { isCredit } from './model.ts';
 import type { Account, AppState, Cents, ISODate, Transaction } from './model.ts';
 import type { StatementRow } from './statement.ts';
@@ -279,6 +280,64 @@ export function applyImport(
     });
   }
   return next;
+}
+
+/* ── Checking the result against the statement ────────────────────────── */
+
+export interface StatementReconciliation {
+  /** What this card will show as of the statement date, if these rows import. */
+  projected: Cents;
+  /** What the statement says is owed. */
+  stated: Cents;
+  difference: Cents;
+  agrees: boolean;
+  /** The starting balance that would make the two agree. */
+  suggestedOpeningBalance: Cents;
+  /** True when the gap is exactly the net movement of the rows being imported. */
+  looksLikeDoubleCount: boolean;
+}
+
+/**
+ * Compare what the import will produce against what the statement says.
+ *
+ * This exists because of one very easy mistake. Adding a card asks for the
+ * balance owed *today* — and if you take that figure off the statement you are
+ * about to import, it already contains every transaction on it. Importing then
+ * counts the same spending twice, and the card ends up wrong by exactly the net
+ * movement of the statement.
+ *
+ * Nothing is corrected automatically: the check reports the gap, names the
+ * likely cause, and offers the starting balance that would close it. Silently
+ * rewriting an opening balance would be changing a number the person entered
+ * on purpose.
+ */
+export function reconcileWithStatement(
+  state: AppState,
+  drafts: ImportDraft[],
+  accountId: string,
+  summary: { totalDue: Cents | null; statementDate: ISODate | null },
+): StatementReconciliation | null {
+  const account = state.accounts.find((a) => a.id === accountId);
+  if (!isCredit(account) || summary.totalDue == null) return null;
+
+  const imported = applyImport(state, drafts, accountId);
+  const projected = cardBalance(imported, accountId, summary.statementDate);
+  const difference = summary.totalDue - projected;
+
+  // Moving the opening balance by δ moves the card's balance by −δ.
+  const suggestedOpeningBalance = account.openingBalance - difference;
+
+  // The signature of a double count: the gap equals what these rows move the
+  // balance by, because the starting figure already included them.
+  const net = drafts.reduce((total, draft) => (draft.include ? total - draft.amount : total), 0);
+  return {
+    projected,
+    stated: summary.totalDue,
+    difference,
+    agrees: Math.abs(difference) < 1,
+    suggestedOpeningBalance,
+    looksLikeDoubleCount: net !== 0 && Math.abs(difference + net) < 1,
+  };
 }
 
 /**

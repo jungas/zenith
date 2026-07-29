@@ -26,12 +26,19 @@ import { readPdfText } from '../src/core/pdf/read.ts';
 import { parseStatement } from '../src/core/statement.ts';
 import type { StatementRow } from '../src/core/statement.ts';
 import {
-  applyImport, buildDrafts, guessCategoryId, importTotals, normalisePayee, suggestAccountId,
+  applyImport, buildDrafts, guessCategoryId, importTotals, normalisePayee,
+  reconcileWithStatement, suggestAccountId,
 } from '../src/core/statement-import.ts';
 import { account, category, must, paymentEnvelope } from './helpers.ts';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const MONTH = '2026-06';
+
+/** The BDO fixture, parsed as of a fixed day. Its own figures add up. */
+function bdoStatement() {
+  const bytes = new Uint8Array(readFileSync(join(ROOT, 'tests/fixtures/bdo-card-aes256.pdf')));
+  return { parsed: parseStatement(readPdfText(bytes, '7788').lines, { today: new Date(2026, 6, 1) }) };
+}
 
 /** Chequing with cash in it, one card, one spending category. */
 function baseState(): AppState {
@@ -319,4 +326,76 @@ test('a real encrypted statement imports and still reconciles', () => {
   const imported = next.transactions.filter((t) => t.memo === 'BDO statement 2026-06-18');
   assert.equal(imported.length, 9, 'eight rows, with the payment recorded as two legs');
   assert.ok(imported.every((t) => t.cleared), 'a statement row has settled by definition');
+});
+
+/* ── Checking the import against the statement ────────────────────────── */
+
+test('an import that matches the statement says so', () => {
+  const state = baseState();
+  const card = account(state, 'BDO Visa');
+  const checking = account(state, 'Everyday Checking');
+  const { parsed } = bdoStatement();
+
+  // The card was opened with the statement's *previous* balance, which is the
+  // figure the statement's own rows start from.
+  const opened = actions.updateAccount(state, card.id, {
+    openingBalance: -must(parsed.summary.previousBalance, 'previous balance'),
+  });
+  const drafts = buildDrafts(opened, parsed.rows, {
+    accountId: card.id,
+    paymentSourceId: checking.id,
+  });
+
+  const check = must(
+    reconcileWithStatement(opened, drafts, card.id, parsed.summary),
+    'the reconciliation',
+  );
+  assert.equal(check.agrees, true);
+  assert.equal(check.projected, parsed.summary.totalDue);
+  assert.equal(check.difference, 0);
+});
+
+test('a starting balance taken from the statement is caught as a double count', () => {
+  const state = baseState();
+  const card = account(state, 'BDO Visa');
+  const checking = account(state, 'Everyday Checking');
+  const { parsed } = bdoStatement();
+  const totalDue = must(parsed.summary.totalDue, 'total due');
+
+  // What someone actually does: add the card with the balance owed *today*,
+  // read off the statement they are about to import.
+  const opened = actions.updateAccount(state, card.id, { openingBalance: -totalDue });
+  const drafts = buildDrafts(opened, parsed.rows, {
+    accountId: card.id,
+    paymentSourceId: checking.id,
+  });
+
+  const check = must(reconcileWithStatement(opened, drafts, card.id, parsed.summary), 'the check');
+  assert.equal(check.agrees, false);
+  assert.equal(check.looksLikeDoubleCount, true, 'the gap is exactly what these rows move');
+
+  // The suggested fix is the statement's previous balance — the figure the card
+  // held before any of these rows happened.
+  assert.equal(
+    check.suggestedOpeningBalance,
+    -must(parsed.summary.previousBalance, 'previous balance'),
+  );
+
+  // Applying it makes the two agree.
+  const fixed = actions.updateAccount(opened, card.id, {
+    openingBalance: check.suggestedOpeningBalance,
+  });
+  const after = must(reconcileWithStatement(fixed, drafts, card.id, parsed.summary), 'the recheck');
+  assert.equal(after.agrees, true);
+  assert.equal(accountBalance(applyImport(fixed, drafts, card.id), card.id), -totalDue);
+});
+
+test('a statement with no stated total has nothing to check against', () => {
+  const state = baseState();
+  const card = account(state, 'BDO Visa');
+  const drafts = buildDrafts(state, [row({})], { accountId: card.id });
+  assert.equal(
+    reconcileWithStatement(state, drafts, card.id, { totalDue: null, statementDate: null }),
+    null,
+  );
 });

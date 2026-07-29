@@ -24,9 +24,10 @@ import { parseStatement } from '../core/statement.ts';
 import type { DateOrder, ParsedStatement } from '../core/statement.ts';
 import type { TextLine } from '../core/pdf/read.ts';
 import {
-  applyImport, buildDrafts, importTotals, suggestAccountId,
+  applyImport, buildDrafts, importTotals, reconcileWithStatement, suggestAccountId,
 } from '../core/statement-import.ts';
 import type { ImportDraft } from '../core/statement-import.ts';
+import * as actions from '../core/actions.ts';
 import { commit, getState, moneyOpts, undo } from '../store.ts';
 import { navigate } from '../router.ts';
 import type { AppState, MoneyOptions } from '../core/model.ts';
@@ -43,10 +44,19 @@ interface Session {
   memo: string;
 }
 
+/**
+ * The in-progress import, held outside the view function on purpose.
+ *
+ * Any `commit` re-renders the current route from scratch, so a session living
+ * inside `importView` would be destroyed by the very buttons on this screen —
+ * correcting a starting balance would throw away the review it was offered
+ * from. Reviewing a statement is minutes of work; it outlives a repaint.
+ */
+let session: Session | null = null;
+
 export function importView(): HTMLElement {
   const root = h('div.view.view-import');
   const stage = h('div.import-stage');
-  let session: Session | null = null;
 
   append(
     root,
@@ -255,6 +265,7 @@ export function importView(): HTMLElement {
 
     const rowsHost = h('ul.import-rows', { role: 'list' });
     const totalsHost = h('div.import-totals');
+    const checkHost = h('div');
 
     const refreshTotals = (): void => {
       if (!session) return;
@@ -273,6 +284,7 @@ export function importView(): HTMLElement {
           : null,
       );
       importButton.disabled = totals.selected === 0;
+      mount(checkHost, statementCheck(session as Session, money));
     };
 
     const paintRows = (): void => {
@@ -323,6 +335,7 @@ export function importView(): HTMLElement {
     mount(
       stage,
       summaryCard(session, money),
+      checkHost,
       h(
         'section.card.block',
         null,
@@ -382,11 +395,111 @@ export function importView(): HTMLElement {
     }
   }
 
-  renderPicker(null);
+  // A re-render lands here again: pick up where the session left off.
+  if (session) renderReview();
+  else renderPicker(null);
   return root;
 }
 
 /* ── Pieces ─────────────────────────────────────────────────────────── */
+
+/**
+ * Does the result of this import match what the statement says is owed?
+ *
+ * The common way it does not: adding a card asks for the balance owed *today*,
+ * and taking that figure from the statement you are about to import means the
+ * starting balance already contains every row on it. Importing then counts the
+ * same spending twice. That is worth catching here rather than leaving someone
+ * to notice a wrong balance later and not know why.
+ */
+function statementCheck(session: Session, money: Money): HTMLElement | null {
+  const state = getState();
+  const check = reconcileWithStatement(state, session.drafts, session.accountId, {
+    totalDue: session.parsed.summary.totalDue,
+    statementDate: session.parsed.summary.statementDate,
+  });
+  if (!check) return null;
+
+  const account = state.accounts.find((a) => a.id === session.accountId);
+  const when = session.parsed.summary.statementDate;
+
+  if (check.agrees) {
+    return h(
+      'section.card.block',
+      null,
+      h('h3.card-title', { text: 'Checked against the statement' }),
+      h(
+        'p.card-text',
+        null,
+        statusPill('good', 'Balances match', { size: 'sm' }),
+        h('span', {
+          text: `Importing these rows leaves ${account?.name ?? 'this card'} owing ${formatMoney(check.projected, money)} — exactly what the statement says.`,
+        }),
+      ),
+    );
+  }
+
+  return h(
+    'section.card.block',
+    null,
+    h('h3.card-title', { text: 'Checked against the statement' }),
+    h(
+      'p.card-text',
+      null,
+      statusPill('warning', `${formatMoney(Math.abs(check.difference), money)} out`, { size: 'sm' }),
+      h('span', {
+        text: `Importing these rows leaves ${account?.name ?? 'this card'} owing ${formatMoney(check.projected, money)}${when ? ` as of ${formatDate(when, money.locale)}` : ''}, but the statement says ${formatMoney(check.stated, money)}.`,
+      }),
+    ),
+    check.looksLikeDoubleCount
+      ? h(
+          'div.inline-note',
+          null,
+          icon('info', { size: 16 }),
+          h('p', {
+            text: `The gap is exactly what these rows add up to, so the card's starting balance most likely already includes them. If you entered what you owed today, that figure was the result of this statement — importing it as well counts the same spending twice.`,
+          }),
+        )
+      : h(
+          'div.inline-note',
+          null,
+          icon('info', { size: 16 }),
+          h('p', {
+            text: 'The difference is whatever this statement does not explain — an earlier balance, or transactions already recorded by hand.',
+          }),
+        ),
+    h(
+      'div.button-row',
+      null,
+      h(
+        'button.btn',
+        {
+          type: 'button',
+          onclick: () => {
+            const accountId = session.accountId;
+            const opening = check.suggestedOpeningBalance;
+            commit((current) => actions.updateAccount(current, accountId, { openingBalance: opening }), {
+              label: 'starting balance',
+            });
+            // No repaint here: `commit` re-renders the route, which rebuilds
+            // this panel from the corrected state.
+            toast(
+              `Starting balance set to ${formatMoney(Math.abs(opening), money)}.`,
+              { tone: 'success', action: { label: 'Undo', onClick: () => undo() } },
+            );
+          },
+        },
+        icon('edit', { size: 16 }),
+        h('span', {
+          text: `Set the starting balance to ${formatMoney(Math.abs(check.suggestedOpeningBalance), money)}`,
+        }),
+      ),
+    ),
+    h('p.import-note', null, icon('info', { size: 14 }), h('span', {
+      text: 'Or leave it — nothing here is wrong if you meant to keep both figures.',
+    })),
+  );
+}
 
 function fact(iconName: IconName, text: string): HTMLElement {
   return h('li.import-fact', null, icon(iconName, { size: 16 }), h('span', { text }));
