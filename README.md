@@ -10,7 +10,7 @@ dependency.
 ```bash
 npm install
 npm start         # builds, then serves http://localhost:4173
-npm test          # type-checks, then runs 159 tests
+npm test          # type-checks, then runs 178 tests
 npm run typecheck # types only
 npm run build     # dist/*.js + sw.js, stamped with a shell version
 npm run icons     # regenerate the app icons
@@ -49,6 +49,29 @@ with $2,000 set aside is a payment method. A $2,000 balance with $760 set aside
 is $1,240 of debt that will start accruing interest — and Zenith says so, in
 those words, with the monthly interest cost attached.
 
+### The same wiring carries loans
+
+A loan is the mirror image of a card. A card's balance grows when you spend, and
+its payment envelope fills itself as you do; a **loan's** balance only falls, and
+its envelope has to be filled deliberately — month by month, before the due date.
+
+What they share is the part that matters: paying either one moves cash out of an
+asset account into a liability, so both own a payment envelope and both draw it
+down when paid. Without one, cash would leave with no envelope falling to match
+it, and the identity below would not hold.
+
+Money already owed on a loan is not income, exactly as a card's opening balance
+is not: it moves the account's balance without ever having been money you could
+budget. Borrowed cash that actually lands in your chequing account *is* income,
+because it is real money you can now assign — the loan account records the
+matching liability.
+
+A loan carries what it needs to plan around: the amount borrowed, the monthly
+amortisation, the term, the due day, and the rate. From those it reports where it
+is (*1 of 48 paid*), what is left to pay, and what the whole thing costs — 48 ×
+₱12,000 against ₱500,000 borrowed is ₱76,000 of interest. Payments due lists it
+beside the cards, because missing a loan payment costs more than missing a card's.
+
 ### The invariant
 
 Because reserves cancel the debt that created them, the whole system collapses to
@@ -58,8 +81,22 @@ one identity, checked live in Settings → **Budget integrity**:
 readyToAssign + Σ available  ===  Σ cash in asset accounts
 ```
 
-Card debt does not appear in it. That is the point: every envelope balance is
+Debt does not appear in it. That is the point: every envelope balance is
 backed by real money sitting in a real account.
+
+Two kinds of movement are **deliberately uncategorised**, and neither disturbs it:
+
+- **Moving money between your own accounts** — chequing to savings, a wallet
+  top-up. Nothing was spent, so no envelope changes and the total you hold is
+  unchanged. Both legs carry no category, and should not.
+- **Spending with no envelope behind it** is the opposite case: the cash has
+  gone. It comes straight out of Ready to assign, which is the pool of money that
+  has not been given a job yet. Leaving it out — which an earlier version did —
+  made cash fall while the budget went on claiming the money was still there, and
+  the integrity check would report a gap it could not explain.
+
+  The same charge on a *credit card* moves no cash, so it does not touch Ready to
+  assign; it simply grows the balance.
 
 The one thing with no reserve behind it is debt that **predates** the budget. It
 moves a card's balance without ever having been income, so it drops out of the
@@ -79,7 +116,7 @@ debt case that a naïve version of the identity gets wrong.)
 | **Card detail** | Statement-cycle timeline, a plain-language walkthrough of the budget connection, and a payoff planner (amortisation, total interest, months saved vs paying the minimum) |
 | **Ledger** | One searchable list across every account, filterable by account, category and month |
 | **Reports** | Income vs spending, spending by category, card debt over time, savings rate — 3/6/12-month ranges |
-| **Accounts** | Net worth, cash, debt, per-account balances — chequing, savings, cash, digital wallets and cards |
+| **Accounts** | Net worth, cash, debt, per-account balances — chequing, savings, cash, digital wallets, cards and loans |
 | **Import** | Read a PDF statement — including a password-protected one — and turn it into transactions, with every row reviewable before anything is saved |
 | **Settings** | Currency (26, including PHP) and locale, theme, utilisation warning threshold, payment reminders, install, JSON backup import/export, CSV export, statement import, sample data, integrity check |
 
@@ -361,6 +398,19 @@ eighteen"; numbers alone cannot separate the two, and inventing a nine-month
 commitment out of a date is a worse failure than missing one. `3 of 12` is
 unambiguous and needs no such wording.
 
+### Moving money is not spending
+
+Nothing on a statement distinguishes money you spent from money you moved to
+your own other account — `TRANSFER TO SAVINGS` looks exactly like a purchase. So
+any row can be switched to a **transfer**, which asks for the account on the
+other side and records the linked pair.
+
+It matters more than it looks. Imported as spending, a transfer overstates what
+you spent, and with no envelope behind it the amount comes out of Ready to
+assign. Imported as a transfer it is correctly uncategorised and changes nothing
+but where the money sits. A transfer with no account chosen on the other side is
+**skipped rather than approximated**, for the same reason a card payment is.
+
 ### It checks its own work
 
 A statement states what you owe. After an import, the card should agree with it
@@ -425,6 +475,7 @@ src/
     actions.ts        state transitions (pure: state → state)
     seed.ts           deterministic sample data
     installments.ts   monthly instalment plans: what is left, and when it stops
+    loans.ts          loan balances, progress, monthly commitment and payoff cost
     statement.ts      reading a bank statement's lines into candidate rows
     statement-import.ts  those rows as transactions, deduped against the ledger
     pdf/              a dependency-free PDF reader — inflate, crypto, objects,

@@ -28,8 +28,17 @@ import { isCredit } from './model.ts';
 import type { Account, AppState, Cents, ISODate, Transaction } from './model.ts';
 import type { StatementRow } from './statement.ts';
 
-/** What a row will become in the ledger. */
-export type RowRole = 'charge' | 'refund' | 'payment' | 'expense' | 'income';
+/**
+ * What a row will become in the ledger.
+ *
+ * `transfer` is the one a person has to choose: nothing on a statement says
+ * whether "TRANSFER TO SAVINGS" left your money or went to your own other
+ * account. Recorded as spending it would overstate what you spent and, having
+ * no envelope, come out of Ready to assign — see `core/budget.ts`. Recorded as
+ * a transfer it is correctly uncategorised and changes nothing but where the
+ * money sits.
+ */
+export type RowRole = 'charge' | 'refund' | 'payment' | 'expense' | 'income' | 'transfer';
 
 export interface ImportDraft {
   rowId: string;
@@ -40,7 +49,10 @@ export interface ImportDraft {
   amount: Cents;
   categoryId: string | null;
   role: RowRole;
-  /** Payments to a card only: the asset account the money came from. */
+  /**
+   * The account on the other side. A card payment's source, or a transfer's
+   * counterpart — the account the money went to, or came from.
+   */
   fromAccountId: string | null;
   /** The id of an existing transaction this looks like, if any. */
   duplicateOf: string | null;
@@ -54,6 +66,19 @@ export interface DraftOptions {
   memo?: string;
   /** Default source account offered for card payments. */
   paymentSourceId?: string | null;
+}
+
+/**
+ * Will this row actually reach the ledger?
+ *
+ * A transfer or a card payment needs the account on the other side; without it
+ * the row is skipped rather than approximated, so it must not count towards any
+ * total either.
+ */
+export function willBeWritten(draft: ImportDraft): boolean {
+  if (!draft.include) return false;
+  if (draft.role === 'payment' || draft.role === 'transfer') return Boolean(draft.fromAccountId);
+  return true;
 }
 
 /** How many days apart two transactions may be and still be the same one. */
@@ -210,7 +235,7 @@ export interface ImportTotals {
   inflow: Cents;
   /** Money leaving, positive. */
   outflow: Cents;
-  /** Card payments with no source account chosen: these cannot be imported. */
+  /** Transfers and card payments with no other account chosen: not importable. */
   unassignedPayments: number;
 }
 
@@ -223,7 +248,7 @@ export function importTotals(drafts: ImportDraft[]): ImportTotals {
   for (const draft of drafts) {
     if (draft.duplicateOf) duplicates++;
     if (!draft.include) continue;
-    if (draft.role === 'payment' && !draft.fromAccountId) {
+    if (!willBeWritten(draft)) {
       unassignedPayments++;
       continue;
     }
@@ -249,14 +274,18 @@ export function applyImport(
   for (const draft of drafts) {
     if (!draft.include) continue;
 
-    if (draft.role === 'payment') {
-      // Without a source account there is no honest way to record this: the
-      // money came from somewhere, and guessing where would unbalance that
-      // account. Such rows are skipped rather than approximated.
+    if (draft.role === 'payment' || draft.role === 'transfer') {
+      // Without the other account there is no honest way to record this: the
+      // money came from, or went to, somewhere, and guessing where would
+      // unbalance that account. Such rows are skipped rather than approximated.
       if (!draft.fromAccountId) continue;
+      // Direction follows the sign. Money leaving this account moves out of it;
+      // money arriving came from the other one. A card payment is always the
+      // latter, which is why it reads the same way round.
+      const outgoing = draft.amount < 0;
       next = addTransfer(next, {
-        fromAccountId: draft.fromAccountId,
-        toAccountId: accountId,
+        fromAccountId: outgoing ? accountId : draft.fromAccountId,
+        toAccountId: outgoing ? draft.fromAccountId : accountId,
         amount: Math.abs(draft.amount),
         date: draft.date,
         payee: draft.payee,
@@ -329,7 +358,10 @@ export function reconcileWithStatement(
 
   // The signature of a double count: the gap equals what these rows move the
   // balance by, because the starting figure already included them.
-  const net = drafts.reduce((total, draft) => (draft.include ? total - draft.amount : total), 0);
+  const net = drafts.reduce(
+    (total, draft) => (willBeWritten(draft) ? total - draft.amount : total),
+    0,
+  );
   return {
     projected,
     stated: summary.totalDue,

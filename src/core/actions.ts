@@ -4,7 +4,7 @@
  */
 
 import {
-  canJoinSharedLimit, ensurePaymentCategories, isCredit, makeAccount, makeCategory,
+  canJoinSharedLimit, ensurePaymentCategories, isCredit, isDebt, makeAccount, makeCategory,
   makeInstallment, makeSharedLimit, makeTransaction, newId, paymentCategoryFor, sameBank,
   sharedLimitById,
 } from './model.ts';
@@ -446,7 +446,10 @@ export function addTransfer(
   const to: Account | undefined = state.accounts.find((a) => a.id === toAccountId);
   const from: Account | undefined = state.accounts.find((a) => a.id === fromAccountId);
 
-  const paymentCategory = to && isCredit(to) ? paymentCategoryFor(state, to.id) : null;
+  // Any debt account: paying a card *or* a loan spends its payment envelope.
+  // Without that the cash would leave an asset account with no envelope falling
+  // to match it, and the identity in `core/budget.ts` would not hold.
+  const paymentCategory = isDebt(to) ? paymentCategoryFor(state, to.id) : null;
   // Paying *from* a card is a cash advance: it draws on the card's own credit,
   // so nothing is categorised — the debt simply grows.
   const label = payee || `${paymentCategory ? 'Payment' : 'Transfer'} to ${to?.name ?? 'account'}`;

@@ -9,8 +9,8 @@ import { icon } from './icons.ts';
 import { parseMoney, centsToInput, formatMoney } from '../core/money.ts';
 import { addMonths, currentMonth, monthLabel, todayISO } from '../core/dates.ts';
 import {
-  ACCOUNT_TYPES, CARD_ISSUERS, CATEGORY_COLORS, isCredit, isWallet, paymentCategoryFor,
-  sameBank, sharedLimitFor, sharedLimitMembers, WALLET_PROVIDERS,
+  ACCOUNT_TYPES, CARD_ISSUERS, CATEGORY_COLORS, isCredit, isLoan, isWallet, LOAN_KINDS,
+  paymentCategoryFor, sameBank, sharedLimitFor, sharedLimitMembers, WALLET_PROVIDERS,
 } from '../core/model.ts';
 import type {
   Account, AccountType, Category, Cents, CreditAccount, Installment, ISODate, MonthKey,
@@ -482,12 +482,13 @@ export function openAccountForm({ account = null, presetType }: AccountFormOptio
   const render = (): void => {
     const credit = type === 'credit';
     const wallet = type === 'wallet';
+    const loan = type === 'loan';
     // One field, two vocabularies: a wallet has a provider, a card has an
     // issuing bank. They are the same fact — who runs the account — so they
     // share `provider` rather than growing a second nearly-identical column.
     const providerInput = input({
       value: providerDraft,
-      placeholder: credit ? 'BPI' : 'GCash',
+      placeholder: credit ? 'BPI' : loan ? 'Pag-IBIG' : 'GCash',
       list: credit ? 'card-issuers' : 'wallet-providers',
       autocomplete: 'off',
       oninput: (event: Event) => {
@@ -572,6 +573,33 @@ export function openAccountForm({ account = null, presetType }: AccountFormOptio
       value: ((terms?.minPaymentRate ?? 0.02) * 100).toFixed(1),
     });
     const minFloorInput = moneyInput({ value: centsToInput(terms?.minPaymentFloor ?? 2500) });
+
+    // Loan terms. A loan is repaid, never spent on, so what it needs is the
+    // monthly amortisation and how long it runs — not a limit.
+    const loanTerms = isLoan(account) ? account : null;
+    const loanKindInput = input({
+      value: loanTerms?.kind ?? '',
+      placeholder: 'Auto loan',
+      list: 'loan-kinds',
+      autocomplete: 'off',
+    });
+    const principalInput = moneyInput({
+      value: loanTerms?.principal ? centsToInput(loanTerms.principal) : '',
+    });
+    const monthlyPaymentInput = moneyInput({
+      value: loanTerms?.monthlyPayment ? centsToInput(loanTerms.monthlyPayment) : '',
+    });
+    const termInput = h<HTMLInputElement>('input.input', {
+      type: 'number', min: '1', max: '600', step: '1',
+      value: loanTerms?.termMonths ? String(loanTerms.termMonths) : '',
+      placeholder: '48',
+    });
+    const loanDueInput = h<HTMLInputElement>('input.input', {
+      type: 'number', min: '1', max: '31', value: loanTerms?.dueDay ?? 5,
+    });
+    const loanStartInput = h<HTMLInputElement>('input.input', {
+      type: 'month', value: loanTerms?.startMonth || currentMonth(),
+    });
 
     /**
      * Who this card shares its limit with.
@@ -685,31 +713,68 @@ export function openAccountForm({ account = null, presetType }: AccountFormOptio
         { id: 'acct-type', hint: editing ? 'Type cannot change after creation.' : undefined },
       ),
       field('Name', nameInput, { id: 'acct-name' }),
-      wallet || credit
+      wallet || credit || loan
         ? h(
             'div',
             null,
-            credit
+            credit || loan
               ? h(
                   'datalist#card-issuers',
                   null,
                   CARD_ISSUERS.map((issuer) => h('option', { value: issuer.name, label: issuer.region })),
                 )
               : h('datalist#wallet-providers', null, WALLET_PROVIDERS.map((n) => h('option', { value: n }))),
-            field(credit ? 'Issuing bank' : 'Provider', providerInput, {
+            field(credit ? 'Issuing bank' : loan ? 'Lender' : 'Provider', providerInput, {
               id: 'acct-provider',
               hint: credit
                 ? 'The bank behind the card. Philippine issuers are listed first; anything else can be typed.'
-                : 'Who runs the wallet. Shown beside the account so two wallets never look alike.',
+                : loan
+                  ? 'Who lent the money — a bank, Pag-IBIG, SSS, a dealership.'
+                  : 'Who runs the wallet. Shown beside the account so two wallets never look alike.',
             }),
           )
         : null,
-      field(credit ? 'Balance owed today' : 'Current balance', openingInput, {
+      field(credit || loan ? 'Balance owed today' : 'Current balance', openingInput, {
         id: 'acct-opening',
         hint: credit
           ? 'Existing debt. Nothing was budgeted for it, so it shows as unfunded until you assign money to the card.'
-          : 'Money already in the account — this becomes your starting funds to budget.',
+          : loan
+            ? 'What is still outstanding. It was never income, so it does not add to what you have to budget.'
+            : 'Money already in the account — this becomes your starting funds to budget.',
       }),
+      loan
+        ? h(
+            'div.form-section',
+            null,
+            h('datalist#loan-kinds', null, LOAN_KINDS.map((name) => h('option', { value: name }))),
+            h('h3.form-section-title', { text: 'Loan terms' }),
+            field('What kind of loan', loanKindInput, { id: 'acct-loan-kind' }),
+            h(
+              'div.form-grid',
+              null,
+              field('Amount borrowed', principalInput, {
+                id: 'acct-principal',
+                hint: 'The original amount, for tracking progress.',
+              }),
+              field('Monthly payment', monthlyPaymentInput, { id: 'acct-monthly' }),
+            ),
+            h(
+              'div.form-grid',
+              null,
+              field('Number of months', termInput, { id: 'acct-term' }),
+              field('Payment due on day', loanDueInput, { id: 'acct-loan-due' }),
+            ),
+            field('First payment', loanStartInput, { id: 'acct-loan-start' }),
+            h(
+              'div.inline-note',
+              null,
+              icon('link', { size: 16 }),
+              h('p', {
+                text: 'A payment envelope is created for this loan. Budget the monthly amount into it and paying the loan spends it — which is what keeps your accounts and your budget in step.',
+              }),
+            ),
+          )
+        : null,
       credit
         ? h(
             'div.form-section',
@@ -767,9 +832,19 @@ export function openAccountForm({ account = null, presetType }: AccountFormOptio
       const patch: AccountDraft = {
         name,
         type,
-        openingBalance: credit ? -openingRaw : openingRaw,
-        ...(wallet || credit ? { provider: providerInput.value.trim() } : {}),
+        openingBalance: credit || loan ? -openingRaw : openingRaw,
+        ...(wallet || credit || loan ? { provider: providerInput.value.trim() } : {}),
       };
+      if (loan) {
+        Object.assign(patch, {
+          kind: loanKindInput.value.trim(),
+          principal: Math.abs(parseMoney(principalInput.value)),
+          monthlyPayment: Math.abs(parseMoney(monthlyPaymentInput.value)),
+          termMonths: Math.max(0, Number.parseInt(termInput.value, 10) || 0),
+          dueDay: clampDay(loanDueInput.value, 5),
+          startMonth: loanStartInput.value || currentMonth(),
+        });
+      }
       if (credit) {
         const typedRate = Math.max(0, Number.parseFloat(aprInput.value || '0')) / 100;
         Object.assign(patch, {
@@ -823,7 +898,11 @@ export function openAccountForm({ account = null, presetType }: AccountFormOptio
           { label: 'add account' },
         );
         closeModal();
-        undoToast(credit ? 'Card added — payment envelope created.' : 'Account added.');
+        undoToast(
+          credit ? 'Card added — payment envelope created.'
+            : loan ? 'Loan added — payment envelope created.'
+            : 'Account added.',
+        );
       }
     };
   };

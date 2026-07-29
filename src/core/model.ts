@@ -30,7 +30,8 @@ export type MonthKey = string;
 export const SCHEMA_VERSION = 1;
 
 export type AssetAccountType = 'checking' | 'savings' | 'cash' | 'wallet';
-export type AccountType = AssetAccountType | 'credit';
+export type DebtAccountType = 'credit' | 'loan';
+export type AccountType = AssetAccountType | DebtAccountType;
 export type TxKind = 'expense' | 'income' | 'transfer' | 'adjustment';
 export type CategoryKind = 'spending' | 'ccPayment';
 export type ThemePreference = 'system' | 'light' | 'dark';
@@ -47,7 +48,18 @@ export const ACCOUNT_TYPES = {
   cash: { label: 'Cash', asset: true },
   wallet: { label: 'Digital wallet', asset: true },
   credit: { label: 'Credit card', asset: false },
+  loan: { label: 'Loan', asset: false },
 } as const satisfies Record<AccountType, { label: string; asset: boolean }>;
+
+/**
+ * Loan kinds worth naming, Philippine ones first. A label only — the maths is
+ * the same whatever the loan is for.
+ */
+export const LOAN_KINDS = [
+  'Personal loan', 'Auto loan', 'Housing loan', 'Pag-IBIG housing loan',
+  'SSS salary loan', 'GSIS loan', 'Salary loan', 'Business loan',
+  'Student loan', 'Motorcycle loan', 'Appliance loan',
+] as const;
 
 /**
  * A digital wallet holds real money you can spend, so it is an asset account
@@ -197,13 +209,53 @@ export interface Installment {
 }
 
 /**
+ * Money borrowed and repaid in fixed monthly amounts.
+ *
+ * Unlike a card, a loan is not spent on: the principal arrives once and the
+ * balance only falls. What it needs from the budget is the opposite of a card's
+ * — not a reserve that grows with spending, but a monthly amount set aside
+ * before the due date. It gets a payment envelope for exactly that reason, and
+ * for one more: paying a loan moves cash out of an asset account into a
+ * liability, and without an envelope to draw down, the identity in
+ * `core/budget.ts` would not hold.
+ */
+export interface LoanAccount extends AccountBase {
+  type: 'loan';
+  /** What was borrowed. */
+  principal: Cents;
+  /** Annual rate as a decimal, however it was quoted — see `rateBasis`. */
+  apr: number;
+  rateBasis?: 'annual' | 'monthly';
+  /** The fixed monthly amortisation. */
+  monthlyPayment: Cents;
+  /** How many monthly payments the loan runs for. */
+  termMonths: number;
+  /** Day of the month the payment falls due. */
+  dueDay: number;
+  /** The month the first payment was due. */
+  startMonth: MonthKey;
+  /** What the loan is for: 'Auto loan', 'Pag-IBIG housing loan'. */
+  kind?: string;
+}
+
+/**
  * A discriminated union, so the card-only terms cannot be read off a chequing
  * account without narrowing through `isCredit` first.
  */
-export type Account = AssetAccount | CreditAccount;
+export type Account = AssetAccount | CreditAccount | LoanAccount;
 
 export const isCredit = (account: Account | null | undefined): account is CreditAccount =>
   account?.type === 'credit';
+
+export const isLoan = (account: Account | null | undefined): account is LoanAccount =>
+  account?.type === 'loan';
+
+/**
+ * Anything owed. Both kinds carry a payment envelope and stay out of
+ * `cashOnHand`; what differs is how the balance gets there.
+ */
+export const isDebt = (account: Account | null | undefined): account is CreditAccount | LoanAccount =>
+  isCredit(account) || isLoan(account);
 
 export const isAsset = (account: Account | null | undefined): account is AssetAccount =>
   account != null && ACCOUNT_TYPES[account.type]?.asset === true;
@@ -327,8 +379,19 @@ const CREDIT_DEFAULTS = {
   rateBasis: 'annual',
 } as const;
 
-/** What callers may pass to `makeAccount`; card terms are ignored for non-cards. */
-export type AccountDraft = Partial<Omit<CreditAccount, 'type'>> & { type?: AccountType };
+const LOAN_DEFAULTS = {
+  principal: 0,
+  apr: 0,
+  rateBasis: 'annual',
+  monthlyPayment: 0,
+  termMonths: 0,
+  dueDay: 5,
+  startMonth: '',
+} as const;
+
+/** What callers may pass to `makeAccount`; terms are ignored for other types. */
+export type AccountDraft = Partial<Omit<CreditAccount, 'type'>> &
+  Partial<Omit<LoanAccount, 'type'>> & { type?: AccountType };
 
 export function makeAccount(patch: AccountDraft = {}): Account {
   const type: AccountType = patch.type && patch.type in ACCOUNT_TYPES ? patch.type : 'checking';
@@ -342,14 +405,23 @@ export function makeAccount(patch: AccountDraft = {}): Account {
     sort: 0,
   };
   if (type === 'credit') {
-    return { ...base, ...CREDIT_DEFAULTS, ...patch, type: 'credit' };
+    const { principal: _p, monthlyPayment: _mp, termMonths: _tm, startMonth: _sm, kind: _k, ...card } = patch;
+    return { ...base, ...CREDIT_DEFAULTS, ...card, type: 'credit' };
+  }
+  if (type === 'loan') {
+    const {
+      creditLimit: _cl, statementDay: _sd, minPaymentRate: _mr, minPaymentFloor: _mf,
+      sharedLimitId: _sl, ...loan
+    } = patch;
+    return { ...base, ...LOAN_DEFAULTS, ...loan, type: 'loan' };
   }
   // Drop any card terms a caller passed for a non-card account, so an asset
   // account can never carry a stale credit limit.
   const {
     creditLimit: _limit, apr: _apr, statementDay: _statement, dueDay: _due,
     minPaymentRate: _rate, minPaymentFloor: _floor, sharedLimitId: _shared,
-    rateBasis: _basis, ...rest
+    rateBasis: _basis, principal: _principal, monthlyPayment: _monthly,
+    termMonths: _term, startMonth: _start, kind: _kind, ...rest
   } = patch;
   return { ...base, ...rest, type };
 }
@@ -435,14 +507,15 @@ export function paymentCategoryFor(state: AppState, accountId: string): Category
 }
 
 /**
- * Every credit account owns exactly one payment category. This is the hinge
+ * Every debt account owns exactly one payment category. This is the hinge
  * between the two halves of the app: card spending funds this envelope, and
- * paying the card spends it back down.
+ * paying the card spends it back down. A loan uses the same envelope for the
+ * other direction — you budget into it monthly, and the payment draws it down.
  */
 export function ensurePaymentCategories(state: AppState): AppState {
   const next: AppState = { ...state, categories: [...state.categories] };
   for (const account of next.accounts) {
-    if (!isCredit(account) || account.archived) continue;
+    if (!isDebt(account) || account.archived) continue;
     const existing = next.categories.find(
       (c) => c.kind === 'ccPayment' && c.accountId === account.id,
     );
@@ -457,7 +530,7 @@ export function ensurePaymentCategories(state: AppState): AppState {
     next.categories.push(
       makeCategory({
         name: account.name,
-        group: 'Credit card payments',
+        group: isLoan(account) ? 'Loan payments' : 'Credit card payments',
         kind: 'ccPayment',
         accountId: account.id,
         color: 'series-8',
@@ -548,10 +621,14 @@ export function categoryGroups(
     if (bucket) bucket.push(category);
     else groups.set(category.group, [category]);
   }
-  // Card payments always sit last — they are funded by the groups above them.
+  // Debt payments always sit last — they are funded by the groups above them.
+  const debtGroups = ['Loan payments', 'Credit card payments'];
   return [...groups.entries()].sort(([a], [b]) => {
-    if (a === 'Credit card payments') return 1;
-    if (b === 'Credit card payments') return -1;
+    const left = debtGroups.indexOf(a);
+    const right = debtGroups.indexOf(b);
+    if (left >= 0 && right >= 0) return left - right;
+    if (left >= 0) return 1;
+    if (right >= 0) return -1;
     return 0;
   });
 }

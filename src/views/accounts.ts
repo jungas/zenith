@@ -5,11 +5,12 @@ import { icon } from '../ui/icons.ts';
 import { statTile, sectionHeader, emptyState, moneyText } from '../ui/components.ts';
 import { openAccountForm, openTransactionForm } from '../ui/forms.ts';
 import { formatMoney } from '../core/money.ts';
-import { accountBalances, cashOnHand, netWorth, totalDebt } from '../core/budget.ts';
-import { ACCOUNT_TYPES, isCredit } from '../core/model.ts';
+import { accountBalances, cashOnHand, netWorth, totalOwed } from '../core/budget.ts';
+import { ACCOUNT_TYPES, isCredit, isLoan } from '../core/model.ts';
+import { loanSnapshot } from '../core/loans.ts';
 import { getState, moneyOpts } from '../store.ts';
 import { navigate } from '../router.ts';
-import type { Account, AccountType, Cents } from '../core/model.ts';
+import type { Account, AccountType, Cents, MoneyOptions } from '../core/model.ts';
 import { isWallet } from '../core/model.ts';
 
 export function accountsView(): HTMLElement {
@@ -51,9 +52,12 @@ export function accountsView(): HTMLElement {
       statTile({ label: 'Cash', value: formatMoney(cashOnHand(state), { ...money, cents: false }) }),
       statTile({
         label: 'Debt',
-        value: formatMoney(totalDebt(state), { ...money, cents: false }),
-        tone: totalDebt(state) > 0 ? 'warning' : 'good',
-        href: '#/cards',
+        value: formatMoney(totalOwed(state), { ...money, cents: false }),
+        tone: totalOwed(state) > 0 ? 'warning' : 'good',
+        hint: state.accounts.some(isLoan) ? 'cards and loans' : undefined,
+        // Only offer the card screen when cards are the whole story; a loan has
+        // no page there, and a link that skips half the figure misleads.
+        ...(state.accounts.some(isLoan) ? {} : { href: '#/cards' }),
       }),
     ),
   );
@@ -102,7 +106,10 @@ export function accountsView(): HTMLElement {
                 h(
                   'span.account-icon',
                   null,
-                  icon(credit ? 'card' : isWallet(account) ? 'phone' : 'wallet', { size: 17 }),
+                  icon(
+                    credit ? 'card' : isLoan(account) ? 'budget' : isWallet(account) ? 'phone' : 'wallet',
+                    { size: 17 },
+                  ),
                 ),
                 h(
                   'span.account-body',
@@ -114,10 +121,12 @@ export function accountsView(): HTMLElement {
                     // already the group heading above, so it only fills in when
                     // there is no issuer or provider to name.
                     text: [
-                      account.provider || (isCredit(account) ? null : meta.label),
+                      account.provider || (isCredit(account) ? null : isLoan(account) ? account.kind || meta.label : meta.label),
                       isCredit(account)
                         ? `${formatMoney(Math.max(0, account.creditLimit + balance), { ...money, cents: false })} available of ${formatMoney(account.creditLimit, { ...money, cents: false })}`
-                        : null,
+                        : isLoan(account)
+                          ? loanMeta(account, money)
+                          : null,
                     ]
                       .filter(Boolean)
                       .join(' · '),
@@ -175,4 +184,25 @@ export function accountsView(): HTMLElement {
   );
 
   return root;
+}
+
+/**
+ * What a loan is doing, in one line: what it costs each month and how far
+ * through it is. The remaining count is what someone actually wants to know —
+ * "18 of 48 paid" plans years ahead in a way a balance alone does not.
+ */
+function loanMeta(
+  account: Account,
+  money: Required<Pick<MoneyOptions, 'currency' | 'locale'>>,
+): string | null {
+  if (!isLoan(account)) return null;
+  const snapshot = loanSnapshot(getState(), account);
+  const parts: string[] = [];
+  if (account.monthlyPayment) {
+    parts.push(`${formatMoney(account.monthlyPayment, { ...money, cents: false })}/mo`);
+  }
+  if (account.termMonths) {
+    parts.push(`${snapshot.paymentsMade} of ${account.termMonths} paid`);
+  }
+  return parts.join(' · ') || null;
 }

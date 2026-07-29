@@ -280,7 +280,7 @@ export function importView(): HTMLElement {
         ),
         totals.unassignedPayments
           ? h('p.import-warn', null, icon('warn', { size: 15 }), h('span', {
-              text: `${totals.unassignedPayments} card payment${totals.unassignedPayments === 1 ? '' : 's'} still need an account to pay from, and will be skipped.`,
+              text: `${totals.unassignedPayments} row${totals.unassignedPayments === 1 ? '' : 's'} still need the account on the other side, and will be skipped.`,
             }))
           : null,
       );
@@ -737,18 +737,23 @@ function draftRow(
     },
   }, icon(outgoing ? 'arrowUp' : 'arrowDown', { size: 14 }), h('span', { text: outgoing ? 'Out' : 'In' }));
 
-  /* A payment to a card is a transfer, so it needs a source account. */
-  const secondary = isPayment
+  const isTransfer = draft.role === 'transfer';
+
+  /*
+   * A transfer or a card payment needs the account on the other side. Both are
+   * uncategorised by nature: the money is still yours, so no envelope changes.
+   */
+  const secondary = isPayment || isTransfer
     ? select(
         [
-          { value: '', label: 'Paid from…' },
+          { value: '', label: isPayment ? 'Paid from…' : draft.amount < 0 ? 'Moved to…' : 'Moved from…' },
           ...state.accounts
-            .filter((a) => !a.archived && !isCredit(a))
+            .filter((a) => !a.archived && a.id !== session.accountId && (!isPayment || !isCredit(a)))
             .map((a) => ({ value: a.id, label: a.name, selected: a.id === draft.fromAccountId })),
         ],
         {
           class: 'input import-category',
-          'aria-label': 'Paid from',
+          'aria-label': isPayment ? 'Paid from' : 'Other account',
           onchange: (event: Event) => {
             draft.fromAccountId = (event.target as HTMLSelectElement).value || null;
             refreshTotals();
@@ -773,6 +778,35 @@ function draftRow(
           },
         );
 
+  /*
+   * Nothing on a statement distinguishes money spent from money moved to your
+   * own other account, so this is the one classification a person has to make.
+   * It matters: recorded as spending, a transfer overstates what you spent and,
+   * having no envelope, comes out of Ready to assign.
+   */
+  const transferToggle = draft.role === 'payment'
+    ? null
+    : h('button', {
+        type: 'button',
+        class: `import-direction${isTransfer ? ' is-in' : ''}`,
+        title: isTransfer
+          ? 'Recorded as moving money between your own accounts — press to record it as spending'
+          : 'Press if this moved money between your own accounts rather than spending it',
+        onclick: () => {
+          if (isTransfer) {
+            const card = isCredit(state.accounts.find((a) => a.id === session.accountId));
+            draft.role = draft.amount < 0 ? (card ? 'charge' : 'expense') : card ? 'refund' : 'income';
+            draft.fromAccountId = null;
+            if (draft.role === 'income') draft.categoryId = null;
+          } else {
+            draft.role = 'transfer';
+            draft.categoryId = null;
+            draft.fromAccountId = defaultPaymentSource(state, session.accountId);
+          }
+          repaint();
+        },
+      }, icon('transfer', { size: 14 }), h('span', { text: isTransfer ? 'Transfer' : 'Move' }));
+
   return h(
     'li',
     { class: `import-row${draft.include ? '' : ' is-excluded'}${draft.duplicateOf ? ' is-duplicate' : ''}` },
@@ -781,7 +815,7 @@ function draftRow(
       h('div.import-line', null, dateField, payeeField),
       h('div.import-line', null,
         secondary,
-        h('div.import-amount-group', null, directionButton, amountField),
+        h('div.import-amount-group', null, transferToggle, directionButton, amountField),
       ),
       draft.duplicateOf
         ? h('p.import-note', null,
@@ -789,10 +823,20 @@ function draftRow(
             h('span', { text: duplicateNote(state, draft, money) }),
           )
         : null,
-      isPayment && !draft.fromAccountId
+      (isPayment || isTransfer) && !draft.fromAccountId
         ? h('p.import-note', null,
             icon('warn', { size: 14 }),
-            h('span', { text: 'A payment to a card moves real money, so Zenith needs to know which account it left.' }),
+            h('span', {
+              text: isPayment
+                ? 'A payment to a card moves real money, so Zenith needs to know which account it left.'
+                : 'Moving money needs both ends. Pick the account on the other side, or switch this back to spending.',
+            }),
+          )
+        : null,
+      isTransfer
+        ? h('p.import-note', null,
+            icon('info', { size: 14 }),
+            h('span', { text: 'Moving money between your own accounts is not spending, so it has no category and no envelope changes.' }),
           )
         : null,
     ),

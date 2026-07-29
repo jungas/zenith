@@ -399,3 +399,77 @@ test('a statement with no stated total has nothing to check against', () => {
     null,
   );
 });
+
+/* ── Moving money between your own accounts ───────────────────────────── */
+
+test('a row marked as a transfer moves money instead of spending it', () => {
+  const state = baseState();
+  const checking = account(state, 'Everyday Checking');
+  let withSavings = actions.addAccount(state, {
+    name: 'Savings', type: 'savings', openingBalance: 0, openedOn: '2026-06-01',
+  });
+  const savings = account(withSavings, 'Savings');
+
+  const drafts = buildDrafts(withSavings, [row({ description: 'TRANSFER TO SAVINGS', amount: 5_000_00 })], {
+    accountId: checking.id,
+  }).map((draft) => ({ ...draft, role: 'transfer' as const, fromAccountId: savings.id, categoryId: null }));
+
+  const next = applyImport(withSavings, drafts, checking.id);
+
+  const legs = next.transactions.filter((t) => t.transferId);
+  assert.equal(legs.length, 2, 'a transfer is a linked pair');
+  assert.equal(accountBalance(next, checking.id), 10_000_00 - 5_000_00, 'it left chequing');
+  assert.equal(accountBalance(next, savings.id), 5_000_00, 'and arrived in savings');
+  // Neither leg is categorised: the money is still yours, so no envelope moved.
+  assert.ok(legs.every((leg) => leg.categoryId === null));
+  assertBalanced(next, 'imported transfer');
+});
+
+test('a transfer with no other account chosen is skipped, not guessed', () => {
+  const state = baseState();
+  const checking = account(state, 'Everyday Checking');
+  const drafts = buildDrafts(state, [row({ description: 'TRANSFER OUT', amount: 5_000_00 })], {
+    accountId: checking.id,
+  }).map((draft) => ({ ...draft, role: 'transfer' as const, fromAccountId: null }));
+
+  assert.equal(importTotals(drafts).selected, 0);
+  assert.equal(importTotals(drafts).unassignedPayments, 1);
+  const next = applyImport(state, drafts, checking.id);
+  assert.equal(next.transactions.length, state.transactions.length);
+});
+
+test('an incoming row marked as a transfer arrives from the other account', () => {
+  let state = baseState();
+  state = actions.addAccount(state, {
+    name: 'Savings', type: 'savings', openingBalance: 20_000_00, openedOn: '2026-06-01',
+  });
+  const checking = account(state, 'Everyday Checking');
+  const savings = account(state, 'Savings');
+
+  const drafts = buildDrafts(
+    state,
+    [row({ description: 'TRANSFER FROM SAVINGS', amount: 3_000_00, direction: 'credit' })],
+    { accountId: checking.id },
+  ).map((draft) => ({ ...draft, role: 'transfer' as const, fromAccountId: savings.id, categoryId: null }));
+
+  const next = applyImport(state, drafts, checking.id);
+  // Direction follows the sign: money arriving came *from* the other account.
+  assert.equal(accountBalance(next, checking.id), 10_000_00 + 3_000_00);
+  assert.equal(accountBalance(next, savings.id), 20_000_00 - 3_000_00);
+  assertBalanced(next, 'incoming transfer');
+});
+
+test('uncategorised imported spending is reported, not silently absorbed', () => {
+  const state = baseState();
+  const checking = account(state, 'Everyday Checking');
+  // A row nothing could be guessed for imports uncategorised. It still has to
+  // add up: the cash left, so Ready to assign carries it.
+  const drafts = buildDrafts(state, [row({ description: 'Unknown merchant', amount: 1_500_00 })], {
+    accountId: checking.id,
+  });
+  assert.equal(drafts[0]?.categoryId, null);
+
+  const next = applyImport(state, drafts, checking.id);
+  assert.equal(buildLedger(next, MONTH).get(MONTH)?.unbudgeted, 1_500_00);
+  assertBalanced(next, 'uncategorised import');
+});

@@ -13,6 +13,7 @@ import {
   cashOnHand, monthSummary, categoryRow, queryTransactions, spendingByCategory,
 } from '../core/budget.ts';
 import { debtSummary, upcomingPayments } from '../core/cards.ts';
+import { upcomingLoanPayments } from '../core/loans.ts';
 import { getState, moneyOpts } from '../store.ts';
 import { enableReminders, notificationPermission, notificationsSupported, remindersOn } from '../reminders.ts';
 import { toast } from '../ui/toast.ts';
@@ -150,7 +151,10 @@ export function dashboardView({ month = currentMonth() }: { month?: MonthKey } =
 
   /* Payments due. */
   const due = upcomingPayments(state, { days: 30 });
-  if (due.length) {
+  // A loan payment is due just as a card payment is, and missing one costs
+  // more, so both belong in the same list.
+  const loansDue = upcomingLoanPayments(state, { days: 30 });
+  if (due.length || loansDue.length) {
     append(
       root,
       h(
@@ -188,6 +192,50 @@ export function dashboardView({ month = currentMonth() }: { month?: MonthKey } =
                 type: 'button',
                 text: 'Pay',
                 onclick: () => openPaymentForm(snap.card.id),
+              }),
+            );
+          }),
+          loansDue.map((snap) => {
+            const days = snap.daysUntilDue;
+            const status = days < 0 ? 'critical' : days <= 3 ? 'serious' : days <= 7 ? 'warning' : 'neutral';
+            return h(
+              'li.due-row',
+              null,
+              h('div.due-icon', null, icon('budget', { size: 18 })),
+              h(
+                'div.due-main',
+                null,
+                h('p.due-name', { text: snap.loan.name }),
+                h('p.due-meta', {
+                  text: `${formatDateShort(snap.nextDueDate, money.locale)} · ${relativeDays(days)}`,
+                }),
+              ),
+              h(
+                'div.due-figures',
+                null,
+                h('p.due-amount', { text: formatMoney(snap.loan.monthlyPayment, money) }),
+                h('p.due-min', {
+                  text: snap.loan.termMonths
+                    ? `${snap.paymentsRemaining} left`
+                    : formatMoney(snap.balance, { ...money, cents: false }) + ' owed',
+                }),
+              ),
+              h(
+                'div.due-status',
+                null,
+                statusPill(
+                  snap.readyForNextPayment ? 'good' : status,
+                  snap.readyForNextPayment ? 'Funded' : relativeDays(days),
+                  { size: 'sm' },
+                ),
+              ),
+              h('button.btn.btn-sm.btn-primary', {
+                type: 'button',
+                text: 'Pay',
+                onclick: () =>
+                  openTransactionForm({
+                    defaults: { kind: 'transfer', toAccountId: snap.loan.id, amount: snap.loan.monthlyPayment },
+                  }),
               }),
             );
           }),
