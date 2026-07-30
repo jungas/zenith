@@ -1,7 +1,7 @@
 /** Shared test helpers. */
 
 import { paymentCategoryFor } from '../src/core/model.ts';
-import type { AppState, Category, CreditAccount } from '../src/core/model.ts';
+import type { AppState, AssetAccount, Category, CreditAccount } from '../src/core/model.ts';
 
 /**
  * Assert a fixture lookup found something.
@@ -24,6 +24,12 @@ export function account(state: AppState, name: string) {
 export function creditAccount(state: AppState, name: string): CreditAccount {
   const found = account(state, name);
   if (found.type !== 'credit') throw new Error(`test fixture: "${name}" is not a credit card`);
+  return found;
+}
+
+export function savingsAccount(state: AppState, name: string): AssetAccount {
+  const found = account(state, name);
+  if (found.type !== 'savings') throw new Error(`test fixture: "${name}" is not a savings account`);
   return found;
 }
 

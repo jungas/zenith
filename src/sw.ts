@@ -63,6 +63,7 @@ const SHELL: string[] = [
   './dist/core/cards.js',
   './dist/core/installments.js',
   './dist/core/loans.js',
+  './dist/core/savings.js',
   './dist/core/actions.js',
   './dist/core/reminders.js',
   './dist/core/seed.js',

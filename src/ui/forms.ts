@@ -580,6 +580,7 @@ export function openAccountForm({ account = null, presetType }: AccountFormOptio
     const credit = type === 'credit';
     const wallet = type === 'wallet';
     const loan = type === 'loan';
+    const savings = type === 'savings';
     // One field, two vocabularies: a wallet has a provider, a card has an
     // issuing bank. They are the same fact — who runs the account — so they
     // share `provider` rather than growing a second nearly-identical column.
@@ -696,6 +697,15 @@ export function openAccountForm({ account = null, presetType }: AccountFormOptio
     });
     const loanStartInput = h<HTMLInputElement>('input.input', {
       type: 'month', value: loanTerms?.startMonth || currentMonth(),
+    });
+
+    // Savings terms: just the rate a bank pays, printed on statements as
+    // "p.a." (per annum) — so that is the label someone actually recognises.
+    const savingsTerms = account && account.type === 'savings' ? account : null;
+    const savingsRateInput = h<HTMLInputElement>('input.input', {
+      type: 'number', step: '0.01', min: '0', max: '50',
+      value: savingsTerms?.interestRate ? (savingsTerms.interestRate * 100).toFixed(2) : '',
+      placeholder: '2.50',
     });
 
     /**
@@ -872,6 +882,17 @@ export function openAccountForm({ account = null, presetType }: AccountFormOptio
             ),
           )
         : null,
+      savings
+        ? h(
+            'div.form-section',
+            null,
+            h('h3.form-section-title', { text: 'Savings terms' }),
+            field('Interest rate % p.a.', savingsRateInput, {
+              id: 'acct-pa',
+              hint: 'The annual rate your bank pays on this balance, as printed on the passbook or account terms ("p.a."). Used to project interest earned.',
+            }),
+          )
+        : null,
       credit
         ? h(
             'div.form-section',
@@ -940,6 +961,11 @@ export function openAccountForm({ account = null, presetType }: AccountFormOptio
           termMonths: Math.max(0, Number.parseInt(termInput.value, 10) || 0),
           dueDay: clampDay(loanDueInput.value, 5),
           startMonth: loanStartInput.value || currentMonth(),
+        });
+      }
+      if (savings) {
+        Object.assign(patch, {
+          interestRate: Math.max(0, Number.parseFloat(savingsRateInput.value || '0')) / 100,
         });
       }
       if (credit) {

@@ -119,6 +119,13 @@ interface AccountBase {
 
 export interface AssetAccount extends AccountBase {
   type: AssetAccountType;
+  /**
+   * A savings account's rate, annual as a decimal (0.025 for 2.5% p.a.) —
+   * "p.a." being how banks print it, so that is the unit the field is named
+   * for. Only meaningful when `type` is 'savings'; absent otherwise, the same
+   * way a card's `apr` is stripped from every other account type.
+   */
+  interestRate?: number;
 }
 
 export interface CreditAccount extends AccountBase {
@@ -496,7 +503,8 @@ const LOAN_DEFAULTS = {
 
 /** What callers may pass to `makeAccount`; terms are ignored for other types. */
 export type AccountDraft = Partial<Omit<CreditAccount, 'type'>> &
-  Partial<Omit<LoanAccount, 'type'>> & { type?: AccountType };
+  Partial<Omit<LoanAccount, 'type'>> &
+  Partial<Omit<AssetAccount, 'type'>> & { type?: AccountType };
 
 export function makeAccount(patch: AccountDraft = {}): Account {
   const type: AccountType = patch.type && patch.type in ACCOUNT_TYPES ? patch.type : 'checking';
@@ -520,15 +528,20 @@ export function makeAccount(patch: AccountDraft = {}): Account {
     } = patch;
     return { ...base, ...LOAN_DEFAULTS, ...loan, type: 'loan' };
   }
-  // Drop any card terms a caller passed for a non-card account, so an asset
-  // account can never carry a stale credit limit.
+  // Drop any card or loan terms a caller passed for a plain asset account, so
+  // it can never carry a stale credit limit or loan rate.
   const {
     creditLimit: _limit, apr: _apr, statementDay: _statement, dueDay: _due,
     minPaymentRate: _rate, minPaymentFloor: _floor, sharedLimitId: _shared,
     rateBasis: _basis, principal: _principal, monthlyPayment: _monthly,
-    termMonths: _term, startMonth: _start, kind: _kind, ...rest
+    termMonths: _term, startMonth: _start, kind: _kind, interestRate: _interestRate,
+    ...rest
   } = patch;
-  return { ...base, ...rest, type };
+  const asset: AssetAccount = { ...base, ...rest, type: type as AssetAccountType };
+  // Same idea as `interestRate` being stripped above: only a savings account
+  // keeps a rate, so switching a savings account to another type drops it.
+  if (type === 'savings') asset.interestRate = patch.interestRate ?? 0;
+  return asset;
 }
 
 export function makeSharedLimit(patch: Partial<SharedLimit> = {}): SharedLimit {
