@@ -28,10 +28,11 @@ function fixture(): AppState {
   return state;
 }
 
-test('a typed p.a. rate is stored as an annual decimal', () => {
+test('a typed p.a. rate is stored as an annual decimal, credited monthly by default', () => {
   const state = fixture();
   const savings = savingsAccount(state, 'Emergency Fund');
   assert.equal(savings.interestRate, 0.024);
+  assert.equal(savings.creditFrequency, 'monthly');
 });
 
 test('a savings snapshot projects monthly and annual interest off the balance', () => {
@@ -43,6 +44,27 @@ test('a savings snapshot projects monthly and annual interest off the balance', 
   assert.equal(snapshot.monthlyInterest, 480_00);
   // 240,000 * 0.024 = 5,760.00
   assert.equal(snapshot.annualInterest, 5_760_00);
+  // Credited monthly, so one crediting date pays the monthly figure.
+  assert.equal(snapshot.perCreditInterest, 480_00);
+});
+
+test('crediting daily or yearly changes what lands on each crediting date', () => {
+  let state = fixture();
+  state = actions.updateAccount(state, savingsAccount(state, 'Emergency Fund').id, {
+    creditFrequency: 'daily',
+  });
+  const daily = savingsSnapshot(state, savingsAccount(state, 'Emergency Fund'));
+  // 240,000 * 0.024 / 365 = 15.78 (rounded)
+  assert.equal(daily.perCreditInterest, Math.round(240_000_00 * 0.024 / 365));
+  // The yardsticks stay put regardless of the crediting cadence.
+  assert.equal(daily.monthlyInterest, 480_00);
+  assert.equal(daily.annualInterest, 5_760_00);
+
+  state = actions.updateAccount(state, savingsAccount(state, 'Emergency Fund').id, {
+    creditFrequency: 'yearly',
+  });
+  const yearly = savingsSnapshot(state, savingsAccount(state, 'Emergency Fund'));
+  assert.equal(yearly.perCreditInterest, 5_760_00, 'credited yearly, the whole year lands at once');
 });
 
 test('a savings account with no rate set projects nothing', () => {
@@ -74,13 +96,14 @@ test('totals sum every savings account, and skip everything else', () => {
 
 /* ── The type is kept honest ──────────────────────────────────────────── */
 
-test('a p.a. rate does not leak onto other account types', () => {
+test('a p.a. rate and crediting cadence do not leak onto other account types', () => {
   let state = fixture();
   state = actions.addAccount(state, {
-    name: 'Chequing 2', type: 'checking', interestRate: 0.05,
+    name: 'Chequing 2', type: 'checking', interestRate: 0.05, creditFrequency: 'daily',
   });
   const chequing = account(state, 'Chequing 2');
   assert.equal('interestRate' in chequing, false);
+  assert.equal('creditFrequency' in chequing, false);
 });
 
 test('editing a savings account keeps its type and lets the rate be updated', () => {

@@ -10,11 +10,12 @@ import { parseMoney, centsToInput, formatMoney } from '../core/money.ts';
 import { addMonths, currentMonth, formatDate, monthLabel, monthOf, todayISO } from '../core/dates.ts';
 import {
   ACCOUNT_TYPES, BILL_CADENCES, CARD_ISSUERS, CATEGORY_COLORS, isCredit, isLoan, isWallet,
-  LOAN_KINDS, paymentCategoryFor, sameBank, sharedLimitFor, sharedLimitMembers, WALLET_PROVIDERS,
+  LOAN_KINDS, paymentCategoryFor, sameBank, SAVINGS_CREDIT_FREQUENCIES, sharedLimitFor,
+  sharedLimitMembers, WALLET_PROVIDERS,
 } from '../core/model.ts';
 import type {
   Account, AccountType, Bill, BillCadence, Category, Cents, CreditAccount, Installment, ISODate,
-  MonthKey, SeriesColor, Transaction, TxKind,
+  MonthKey, SavingsCreditFrequency, SeriesColor, Transaction, TxKind,
 } from '../core/model.ts';
 import { billById, billSnapshot } from '../core/bills.ts';
 import { categoryRow, monthSummary } from '../core/budget.ts';
@@ -707,6 +708,13 @@ export function openAccountForm({ account = null, presetType }: AccountFormOptio
       value: savingsTerms?.interestRate ? (savingsTerms.interestRate * 100).toFixed(2) : '',
       placeholder: '2.50',
     });
+    savingsRateInput.id = 'acct-pa';
+    const creditFreqSelect = select(
+      Object.entries(SAVINGS_CREDIT_FREQUENCIES).map(([value, meta]) => ({
+        value, label: meta.label, selected: value === (savingsTerms?.creditFrequency ?? 'monthly'),
+      })),
+      { class: 'input rate-basis', 'aria-label': 'Credited' },
+    );
 
     /**
      * Who this card shares its limit with.
@@ -887,10 +895,15 @@ export function openAccountForm({ account = null, presetType }: AccountFormOptio
             'div.form-section',
             null,
             h('h3.form-section-title', { text: 'Savings terms' }),
-            field('Interest rate % p.a.', savingsRateInput, {
-              id: 'acct-pa',
-              hint: 'The annual rate your bank pays on this balance, as printed on the passbook or account terms ("p.a."). Used to project interest earned.',
-            }),
+            h(
+              'label.field',
+              { for: 'acct-pa' },
+              h('span.field-label', { text: 'Interest rate % p.a.' }),
+              h('div.rate-row', null, savingsRateInput, creditFreqSelect),
+              h('span.field-hint', {
+                text: 'The annual rate your bank pays on this balance, as printed on the passbook or account terms ("p.a."). Choose how often it is actually credited — daily, monthly or yearly — to project the right amount.',
+              }),
+            ),
           )
         : null,
       credit
@@ -966,6 +979,7 @@ export function openAccountForm({ account = null, presetType }: AccountFormOptio
       if (savings) {
         Object.assign(patch, {
           interestRate: Math.max(0, Number.parseFloat(savingsRateInput.value || '0')) / 100,
+          creditFrequency: creditFreqSelect.value as SavingsCreditFrequency,
         });
       }
       if (credit) {

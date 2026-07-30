@@ -126,7 +126,23 @@ export interface AssetAccount extends AccountBase {
    * way a card's `apr` is stripped from every other account type.
    */
   interestRate?: number;
+  /**
+   * How often the bank actually pays that rate into the balance. The rate
+   * itself is always annual — same as a loan's `apr` — but crediting it daily
+   * rather than yearly changes how much a given balance actually earns, so
+   * the cadence is stored alongside the rate rather than assumed. Only
+   * meaningful when `type` is 'savings'; absent otherwise.
+   */
+  creditFrequency?: SavingsCreditFrequency;
 }
+
+export type SavingsCreditFrequency = 'daily' | 'monthly' | 'yearly';
+
+export const SAVINGS_CREDIT_FREQUENCIES = {
+  daily: { label: 'Daily', perYear: 365 },
+  monthly: { label: 'Monthly', perYear: 12 },
+  yearly: { label: 'Yearly', perYear: 1 },
+} as const satisfies Record<SavingsCreditFrequency, { label: string; perYear: number }>;
 
 export interface CreditAccount extends AccountBase {
   type: 'credit';
@@ -534,13 +550,18 @@ export function makeAccount(patch: AccountDraft = {}): Account {
     creditLimit: _limit, apr: _apr, statementDay: _statement, dueDay: _due,
     minPaymentRate: _rate, minPaymentFloor: _floor, sharedLimitId: _shared,
     rateBasis: _basis, principal: _principal, monthlyPayment: _monthly,
-    termMonths: _term, startMonth: _start, kind: _kind, interestRate: _interestRate,
+    termMonths: _term, startMonth: _start, kind: _kind,
+    interestRate: _interestRate, creditFrequency: _creditFrequency,
     ...rest
   } = patch;
   const asset: AssetAccount = { ...base, ...rest, type: type as AssetAccountType };
   // Same idea as `interestRate` being stripped above: only a savings account
-  // keeps a rate, so switching a savings account to another type drops it.
-  if (type === 'savings') asset.interestRate = patch.interestRate ?? 0;
+  // keeps a rate and a crediting cadence, so switching a savings account to
+  // another type drops both.
+  if (type === 'savings') {
+    asset.interestRate = patch.interestRate ?? 0;
+    asset.creditFrequency = patch.creditFrequency ?? 'monthly';
+  }
   return asset;
 }
 

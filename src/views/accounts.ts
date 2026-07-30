@@ -6,7 +6,7 @@ import { statTile, sectionHeader, emptyState, moneyText } from '../ui/components
 import { openAccountForm, openTransactionForm } from '../ui/forms.ts';
 import { formatMoney, formatPercent } from '../core/money.ts';
 import { accountBalances, cashOnHand, netWorth, totalOwed } from '../core/budget.ts';
-import { ACCOUNT_TYPES, isCredit, isLoan } from '../core/model.ts';
+import { ACCOUNT_TYPES, isCredit, isLoan, SAVINGS_CREDIT_FREQUENCIES } from '../core/model.ts';
 import { loanSnapshot } from '../core/loans.ts';
 import { savingsSnapshot } from '../core/savings.ts';
 import { getState, moneyOpts } from '../store.ts';
@@ -211,8 +211,9 @@ function loanMeta(
 }
 
 /**
- * What a savings account's p.a. rate is earning: the rate itself, and the
- * month's worth of interest it projects on today's balance.
+ * What a savings account's p.a. rate is earning: the rate itself, and what
+ * lands on the balance the next time it is credited — daily, monthly or
+ * yearly, whichever this account actually does.
  */
 function savingsMeta(
   account: Account,
@@ -221,8 +222,9 @@ function savingsMeta(
   if (account.type !== 'savings' || !account.interestRate) return null;
   const snapshot = savingsSnapshot(getState(), account);
   const parts = [`${formatPercent(snapshot.annualRate, 2)} p.a.`];
-  if (snapshot.monthlyInterest > 0) {
-    parts.push(`${formatMoney(snapshot.monthlyInterest, { ...money, cents: false })}/mo interest`);
+  if (snapshot.perCreditInterest > 0) {
+    const cadence = SAVINGS_CREDIT_FREQUENCIES[snapshot.creditFrequency].label.toLowerCase();
+    parts.push(`${formatMoney(snapshot.perCreditInterest, { ...money, cents: false })} credited ${cadence}`);
   }
   return parts.join(' · ');
 }

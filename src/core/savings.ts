@@ -9,8 +9,8 @@
  */
 
 import { accountBalance } from './budget.ts';
-import { isAsset } from './model.ts';
-import type { AppState, AssetAccount, Cents } from './model.ts';
+import { isAsset, SAVINGS_CREDIT_FREQUENCIES } from './model.ts';
+import type { AppState, AssetAccount, Cents, SavingsCreditFrequency } from './model.ts';
 
 export const savingsAccounts = (
   state: AppState,
@@ -26,22 +26,36 @@ export interface SavingsSnapshot {
   balance: Cents;
   /** Annual rate as a decimal, e.g. 0.025 for 2.5% p.a. */
   annualRate: number;
+  /** How often the bank pays the rate into the balance. */
+  creditFrequency: SavingsCreditFrequency;
   /** One more month at the stated rate. */
   monthlyInterest: Cents;
   /** One more year at the stated rate, on today's balance. */
   annualInterest: Cents;
+  /**
+   * What actually lands on one crediting date — a twelfth of a year's
+   * interest when credited monthly, a 365th when credited daily, and the
+   * whole year's when credited yearly. This is the figure a statement
+   * actually shows; `monthlyInterest`/`annualInterest` above are fixed
+   * yardsticks for comparing accounts that credit on different schedules.
+   */
+  perCreditInterest: Cents;
 }
 
 /** What this savings account's p.a. rate earns on its balance, monthly and yearly. */
 export function savingsSnapshot(state: AppState, account: AssetAccount): SavingsSnapshot {
   const balance = Math.max(0, accountBalance(state, account.id));
   const annualRate = account.interestRate || 0;
+  const creditFrequency = account.creditFrequency ?? 'monthly';
+  const periodsPerYear = SAVINGS_CREDIT_FREQUENCIES[creditFrequency].perYear;
   return {
     account,
     balance,
     annualRate,
+    creditFrequency,
     monthlyInterest: balance > 0 && annualRate ? Math.round(balance * (annualRate / 12)) : 0,
     annualInterest: balance > 0 && annualRate ? Math.round(balance * annualRate) : 0,
+    perCreditInterest: balance > 0 && annualRate ? Math.round(balance * (annualRate / periodsPerYear)) : 0,
   };
 }
 
