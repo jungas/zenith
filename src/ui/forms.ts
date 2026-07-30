@@ -10,11 +10,12 @@ import { parseMoney, centsToInput, formatMoney } from '../core/money.ts';
 import { addMonths, currentMonth, formatDate, monthLabel, monthOf, todayISO } from '../core/dates.ts';
 import {
   ACCOUNT_TYPES, BILL_CADENCES, CARD_ISSUERS, CATEGORY_COLORS, isCredit, isLoan, isWallet,
-  LOAN_KINDS, paymentCategoryFor, sameBank, sharedLimitFor, sharedLimitMembers, WALLET_PROVIDERS,
+  LOAN_KINDS, paymentCategoryFor, sameBank, SAVINGS_CREDIT_FREQUENCIES, sharedLimitFor,
+  sharedLimitMembers, WALLET_PROVIDERS,
 } from '../core/model.ts';
 import type {
   Account, AccountType, Bill, BillCadence, Category, Cents, CreditAccount, Installment, ISODate,
-  MonthKey, SeriesColor, Transaction, TxKind,
+  MonthKey, SavingsCreditFrequency, SeriesColor, Transaction, TxKind,
 } from '../core/model.ts';
 import { billById, billSnapshot } from '../core/bills.ts';
 import { categoryRow, monthSummary } from '../core/budget.ts';
@@ -580,6 +581,7 @@ export function openAccountForm({ account = null, presetType }: AccountFormOptio
     const credit = type === 'credit';
     const wallet = type === 'wallet';
     const loan = type === 'loan';
+    const savings = type === 'savings';
     // One field, two vocabularies: a wallet has a provider, a card has an
     // issuing bank. They are the same fact — who runs the account — so they
     // share `provider` rather than growing a second nearly-identical column.
@@ -697,6 +699,22 @@ export function openAccountForm({ account = null, presetType }: AccountFormOptio
     const loanStartInput = h<HTMLInputElement>('input.input', {
       type: 'month', value: loanTerms?.startMonth || currentMonth(),
     });
+
+    // Savings terms: just the rate a bank pays, printed on statements as
+    // "p.a." (per annum) — so that is the label someone actually recognises.
+    const savingsTerms = account && account.type === 'savings' ? account : null;
+    const savingsRateInput = h<HTMLInputElement>('input.input', {
+      type: 'number', step: '0.01', min: '0', max: '50',
+      value: savingsTerms?.interestRate ? (savingsTerms.interestRate * 100).toFixed(2) : '',
+      placeholder: '2.50',
+    });
+    savingsRateInput.id = 'acct-pa';
+    const creditFreqSelect = select(
+      Object.entries(SAVINGS_CREDIT_FREQUENCIES).map(([value, meta]) => ({
+        value, label: meta.label, selected: value === (savingsTerms?.creditFrequency ?? 'monthly'),
+      })),
+      { class: 'input rate-basis', 'aria-label': 'Credited' },
+    );
 
     /**
      * Who this card shares its limit with.
@@ -872,6 +890,22 @@ export function openAccountForm({ account = null, presetType }: AccountFormOptio
             ),
           )
         : null,
+      savings
+        ? h(
+            'div.form-section',
+            null,
+            h('h3.form-section-title', { text: 'Savings terms' }),
+            h(
+              'label.field',
+              { for: 'acct-pa' },
+              h('span.field-label', { text: 'Interest rate % p.a.' }),
+              h('div.rate-row', null, savingsRateInput, creditFreqSelect),
+              h('span.field-hint', {
+                text: 'The annual rate your bank pays on this balance, as printed on the passbook or account terms ("p.a."). Choose how often it is actually credited — daily, monthly or yearly — to project the right amount.',
+              }),
+            ),
+          )
+        : null,
       credit
         ? h(
             'div.form-section',
@@ -940,6 +974,12 @@ export function openAccountForm({ account = null, presetType }: AccountFormOptio
           termMonths: Math.max(0, Number.parseInt(termInput.value, 10) || 0),
           dueDay: clampDay(loanDueInput.value, 5),
           startMonth: loanStartInput.value || currentMonth(),
+        });
+      }
+      if (savings) {
+        Object.assign(patch, {
+          interestRate: Math.max(0, Number.parseFloat(savingsRateInput.value || '0')) / 100,
+          creditFrequency: creditFreqSelect.value as SavingsCreditFrequency,
         });
       }
       if (credit) {

@@ -119,7 +119,30 @@ interface AccountBase {
 
 export interface AssetAccount extends AccountBase {
   type: AssetAccountType;
+  /**
+   * A savings account's rate, annual as a decimal (0.025 for 2.5% p.a.) —
+   * "p.a." being how banks print it, so that is the unit the field is named
+   * for. Only meaningful when `type` is 'savings'; absent otherwise, the same
+   * way a card's `apr` is stripped from every other account type.
+   */
+  interestRate?: number;
+  /**
+   * How often the bank actually pays that rate into the balance. The rate
+   * itself is always annual — same as a loan's `apr` — but crediting it daily
+   * rather than yearly changes how much a given balance actually earns, so
+   * the cadence is stored alongside the rate rather than assumed. Only
+   * meaningful when `type` is 'savings'; absent otherwise.
+   */
+  creditFrequency?: SavingsCreditFrequency;
 }
+
+export type SavingsCreditFrequency = 'daily' | 'monthly' | 'yearly';
+
+export const SAVINGS_CREDIT_FREQUENCIES = {
+  daily: { label: 'Daily', perYear: 365 },
+  monthly: { label: 'Monthly', perYear: 12 },
+  yearly: { label: 'Yearly', perYear: 1 },
+} as const satisfies Record<SavingsCreditFrequency, { label: string; perYear: number }>;
 
 export interface CreditAccount extends AccountBase {
   type: 'credit';
@@ -496,7 +519,8 @@ const LOAN_DEFAULTS = {
 
 /** What callers may pass to `makeAccount`; terms are ignored for other types. */
 export type AccountDraft = Partial<Omit<CreditAccount, 'type'>> &
-  Partial<Omit<LoanAccount, 'type'>> & { type?: AccountType };
+  Partial<Omit<LoanAccount, 'type'>> &
+  Partial<Omit<AssetAccount, 'type'>> & { type?: AccountType };
 
 export function makeAccount(patch: AccountDraft = {}): Account {
   const type: AccountType = patch.type && patch.type in ACCOUNT_TYPES ? patch.type : 'checking';
@@ -520,15 +544,25 @@ export function makeAccount(patch: AccountDraft = {}): Account {
     } = patch;
     return { ...base, ...LOAN_DEFAULTS, ...loan, type: 'loan' };
   }
-  // Drop any card terms a caller passed for a non-card account, so an asset
-  // account can never carry a stale credit limit.
+  // Drop any card or loan terms a caller passed for a plain asset account, so
+  // it can never carry a stale credit limit or loan rate.
   const {
     creditLimit: _limit, apr: _apr, statementDay: _statement, dueDay: _due,
     minPaymentRate: _rate, minPaymentFloor: _floor, sharedLimitId: _shared,
     rateBasis: _basis, principal: _principal, monthlyPayment: _monthly,
-    termMonths: _term, startMonth: _start, kind: _kind, ...rest
+    termMonths: _term, startMonth: _start, kind: _kind,
+    interestRate: _interestRate, creditFrequency: _creditFrequency,
+    ...rest
   } = patch;
-  return { ...base, ...rest, type };
+  const asset: AssetAccount = { ...base, ...rest, type: type as AssetAccountType };
+  // Same idea as `interestRate` being stripped above: only a savings account
+  // keeps a rate and a crediting cadence, so switching a savings account to
+  // another type drops both.
+  if (type === 'savings') {
+    asset.interestRate = patch.interestRate ?? 0;
+    asset.creditFrequency = patch.creditFrequency ?? 'monthly';
+  }
+  return asset;
 }
 
 export function makeSharedLimit(patch: Partial<SharedLimit> = {}): SharedLimit {

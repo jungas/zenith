@@ -116,7 +116,7 @@ export function seedState(
   });
   const savings = makeAccount({
     name: 'Emergency Savings', type: 'savings', openingBalance: 950000,
-    openedOn: `${firstMonth}-01`, sort: 1,
+    openedOn: `${firstMonth}-01`, interestRate: 0.025, sort: 1,
   });
   const wallet = makeAccount({
     name: 'Cash', type: 'cash', openingBalance: 12000,

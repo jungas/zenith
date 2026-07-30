@@ -4,10 +4,11 @@ import { h, append } from '../ui/dom.ts';
 import { icon } from '../ui/icons.ts';
 import { statTile, sectionHeader, emptyState, moneyText } from '../ui/components.ts';
 import { openAccountForm, openTransactionForm } from '../ui/forms.ts';
-import { formatMoney } from '../core/money.ts';
+import { formatMoney, formatPercent } from '../core/money.ts';
 import { accountBalances, cashOnHand, netWorth, totalOwed } from '../core/budget.ts';
-import { ACCOUNT_TYPES, isCredit, isLoan } from '../core/model.ts';
+import { ACCOUNT_TYPES, isCredit, isLoan, SAVINGS_CREDIT_FREQUENCIES } from '../core/model.ts';
 import { loanSnapshot } from '../core/loans.ts';
+import { savingsSnapshot } from '../core/savings.ts';
 import { getState, moneyOpts } from '../store.ts';
 import { navigate } from '../router.ts';
 import type { Account, AccountType, Cents, MoneyOptions } from '../core/model.ts';
@@ -126,7 +127,9 @@ export function accountsView(): HTMLElement {
                         ? `${formatMoney(Math.max(0, account.creditLimit + balance), { ...money, cents: false })} available of ${formatMoney(account.creditLimit, { ...money, cents: false })}`
                         : isLoan(account)
                           ? loanMeta(account, money)
-                          : null,
+                          : account.type === 'savings'
+                            ? savingsMeta(account, money)
+                            : null,
                     ]
                       .filter(Boolean)
                       .join(' · '),
@@ -205,4 +208,23 @@ function loanMeta(
     parts.push(`${snapshot.paymentsMade} of ${account.termMonths} paid`);
   }
   return parts.join(' · ') || null;
+}
+
+/**
+ * What a savings account's p.a. rate is earning: the rate itself, and what
+ * lands on the balance the next time it is credited — daily, monthly or
+ * yearly, whichever this account actually does.
+ */
+function savingsMeta(
+  account: Account,
+  money: Required<Pick<MoneyOptions, 'currency' | 'locale'>>,
+): string | null {
+  if (account.type !== 'savings' || !account.interestRate) return null;
+  const snapshot = savingsSnapshot(getState(), account);
+  const parts = [`${formatPercent(snapshot.annualRate, 2)} p.a.`];
+  if (snapshot.perCreditInterest > 0) {
+    const cadence = SAVINGS_CREDIT_FREQUENCIES[snapshot.creditFrequency].label.toLowerCase();
+    parts.push(`${formatMoney(snapshot.perCreditInterest, { ...money, cents: false })} credited ${cadence}`);
+  }
+  return parts.join(' · ');
 }
