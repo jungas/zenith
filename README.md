@@ -10,7 +10,7 @@ dependency.
 ```bash
 npm install
 npm start         # builds, then serves http://localhost:4173
-npm test          # type-checks, then runs 217 tests
+npm test          # type-checks, then runs 221 tests
 npm run typecheck # types only
 npm run build     # dist/*.js + sw.js, stamped with a shell version
 npm run icons     # regenerate the app icons
@@ -223,6 +223,20 @@ it takes part in the same reconciliation identity as chequing and savings.
 - **Editing and deleting** treat the fee as part of the transfer: deleting the
   transfer takes the fee with it, a date change carries it along, and changing
   the transferred amount leaves the fee's own amount alone.
+- **Editing a transfer edits the transfer**, not the leg you opened. One movement
+  is recorded in two accounts, so the dialog fills itself from the pair — From is
+  the account the money left, To is the one it arrived in, the amount is the
+  movement rather than one leg's signed share of it — and saving rewrites both
+  legs at once, keeping their ids. Recording a *second* pair instead, which an
+  earlier version did, doubled every total the first one had already moved.
+
+  Because the destination is what decides the category, redirecting a transfer at
+  a card turns it into a card payment and the outflow leg picks up that card's
+  payment envelope; redirecting it away gives the envelope back up. The same is
+  true across kinds: something recorded as spending that was really a transfer
+  *replaces* the expense rather than joining it, and a transfer reclassified as
+  spending takes its other leg with it — that leg recorded money arriving
+  somewhere it never did.
 
 ---
 
@@ -722,8 +736,9 @@ shipped with:
 - **Test fixtures fail loudly.** Lookups go through a `must()` helper rather than
   a `!` assertion, so a drifted fixture reports what went missing instead of
   throwing a TypeError inside an assertion.
-- **Transfers are always a linked pair.** Deleting an account deletes both legs —
-  a half-transfer would silently unbalance every total in the app.
+- **Transfers are always a linked pair.** Deleting an account deletes both legs,
+  and editing one rewrites both — a half-transfer, or a second copy of one, would
+  silently unbalance every total in the app.
 - **Text always goes through `textContent`.** A payee named `<img onerror=…>` is
   just an odd payee name.
 
