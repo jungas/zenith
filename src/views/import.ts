@@ -25,7 +25,7 @@ import { findMatchingPlan, planFromStatementRow } from '../core/installments.ts'
 import type { DateOrder, ParsedStatement } from '../core/statement.ts';
 import type { TextLine } from '../core/pdf/read.ts';
 import {
-  applyImport, buildDrafts, importTotals, reconcileWithStatement, suggestAccountId,
+  applyImport, buildDrafts, importTotals, matchOwnAccount, reconcileWithStatement, suggestAccountId,
 } from '../core/statement-import.ts';
 import type { ImportDraft } from '../core/statement-import.ts';
 import * as actions from '../core/actions.ts';
@@ -696,8 +696,26 @@ function draftRow(
     type: 'date',
     value: draft.date,
     'aria-label': 'Date',
+    title: 'When the money moved — the date the budget uses',
     onchange: (event: Event) => {
       draft.date = (event.target as HTMLInputElement).value || todayISO();
+    },
+  });
+
+  /*
+   * The date the bank posted this row. It is stored with the transaction, and it
+   * is what stops this statement's rows arriving twice if it is ever imported
+   * again — see `findDuplicate`. Editable, because a statement that prints only
+   * one date leaves this equal to the date above, and a corrected posting date
+   * is worth more to the next import than a guessed one.
+   */
+  const postedField = h<HTMLInputElement>('input.input.import-date', {
+    type: 'date',
+    value: draft.postedDate ?? '',
+    'aria-label': 'Posted date',
+    title: 'The date the bank posted it. Kept so this row is recognised if the statement is imported again.',
+    onchange: (event: Event) => {
+      draft.postedDate = (event.target as HTMLInputElement).value || null;
     },
   });
 
@@ -738,6 +756,11 @@ function draftRow(
   }, icon(outgoing ? 'arrowUp' : 'arrowDown', { size: 14 }), h('span', { text: outgoing ? 'Out' : 'In' }));
 
   const isTransfer = draft.role === 'transfer';
+  // Named when the row itself is why this is a move, so the note can say so.
+  // Nothing is claimed when the person picked the other side by hand: they know
+  // why it is a transfer better than a note does.
+  const own = matchOwnAccount(state, draft.payee, session.accountId);
+  const recognised = own && own.id === draft.fromAccountId ? own.name : null;
 
   /*
    * A transfer or a card payment needs the account on the other side. Both are
@@ -801,7 +824,11 @@ function draftRow(
           } else {
             draft.role = 'transfer';
             draft.categoryId = null;
-            draft.fromAccountId = defaultPaymentSource(state, session.accountId);
+            // If the row names one of your own accounts, that is a better guess
+            // at the other side than the largest cash account.
+            draft.fromAccountId =
+              matchOwnAccount(state, draft.payee, session.accountId)?.id
+              ?? defaultPaymentSource(state, session.accountId);
           }
           repaint();
         },
@@ -812,7 +839,14 @@ function draftRow(
     { class: `import-row${draft.include ? '' : ' is-excluded'}${draft.duplicateOf ? ' is-duplicate' : ''}` },
     h('label.import-check', null, includeBox),
     h('div.import-fields', null,
-      h('div.import-line', null, dateField, payeeField),
+      h('div.import-line', null,
+        dateField,
+        h('label.import-posted', null,
+          h('span', { text: 'Posted' }),
+          postedField,
+        ),
+        payeeField,
+      ),
       h('div.import-line', null,
         secondary,
         h('div.import-amount-group', null, transferToggle, directionButton, amountField),
@@ -836,7 +870,11 @@ function draftRow(
       isTransfer
         ? h('p.import-note', null,
             icon('info', { size: 14 }),
-            h('span', { text: 'Moving money between your own accounts is not spending, so it has no category and no envelope changes.' }),
+            h('span', {
+              text: recognised
+                ? `This row names ${recognised}, one of your own accounts, so it is read as moving money rather than spending it: no category, and no envelope changes. Switch it back if it was spending.`
+                : 'Moving money between your own accounts is not spending, so it has no category and no envelope changes.',
+            }),
           )
         : null,
     ),
@@ -846,7 +884,13 @@ function draftRow(
 function duplicateNote(state: AppState, draft: ImportDraft, money: Money): string {
   const existing = state.transactions.find((t) => t.id === draft.duplicateOf);
   if (!existing) return 'Looks like a transaction you already have.';
-  return `Already in your ledger: ${existing.payee || 'transaction'} on ${formatDate(existing.date, money.locale)} for ${formatMoney(existing.amount, money)}.`;
+  const what = `${existing.payee || 'transaction'} on ${formatDate(existing.date, money.locale)} for ${formatMoney(existing.amount, money)}`;
+  // A posting date agreeing exactly is the bank saying these are one row, so it
+  // is reported as the fact it is rather than as a resemblance.
+  if (draft.duplicateBy === 'posted' && draft.postedDate) {
+    return `Already in your ledger, posted the same day (${formatDate(draft.postedDate, money.locale)}): ${what}.`;
+  }
+  return `Already in your ledger: ${what}.`;
 }
 
 /* ── Helpers ────────────────────────────────────────────────────────── */

@@ -251,6 +251,116 @@ test('two identical rows are not both absorbed by one existing transaction', () 
   assert.equal(importTotals(drafts).selected, 1);
 });
 
+/* ── The posting date, and importing a statement twice ────────────────── */
+
+test('importing the same statement twice adds nothing the second time', () => {
+  const state = baseState();
+  const card = account(state, 'BDO Visa');
+  const checking = account(state, 'Everyday Checking');
+  const groceries = category(state, 'Groceries');
+  const { parsed } = bdoStatement();
+
+  const options = { accountId: card.id, memo: 'BDO statement 2026-06-18', paymentSourceId: checking.id };
+  const first = buildDrafts(state, parsed.rows, options).map((draft) =>
+    draft.role === 'charge' && !draft.categoryId ? { ...draft, categoryId: groceries.id } : draft,
+  );
+  const imported = applyImport(state, first, card.id);
+
+  // The second pass reads the ledger the first one wrote. Every row is matched by
+  // the date the bank posted it — the one thing about a row that a statement will
+  // never say differently — so nothing is offered again.
+  const second = buildDrafts(imported, parsed.rows, options);
+  assert.equal(second.length, parsed.rows.length);
+  assert.ok(second.every((draft) => draft.duplicateOf), 'every row was recognised');
+  assert.ok(second.every((draft) => draft.duplicateBy === 'posted'), 'matched on the posting date');
+  assert.ok(second.every((draft) => !draft.include), 'and none of them arrive ticked');
+  assert.equal(importTotals(second).selected, 0);
+  assert.equal(importTotals(second).duplicates, parsed.rows.length);
+
+  // Belt and braces: even importing the unticked result writes nothing.
+  const twice = applyImport(imported, second, card.id);
+  assert.equal(twice.transactions.length, imported.transactions.length, 'nothing was written');
+  assert.equal(accountBalance(twice, card.id), accountBalance(imported, card.id));
+  assert.equal(accountBalance(twice, checking.id), accountBalance(imported, checking.id));
+  assertBalanced(twice, 'statement imported twice');
+});
+
+test('every transaction an import writes carries the date the bank posted it', () => {
+  const state = baseState();
+  const card = account(state, 'BDO Visa');
+  const checking = account(state, 'Everyday Checking');
+  const { parsed } = bdoStatement();
+
+  const drafts = buildDrafts(state, parsed.rows, {
+    accountId: card.id, paymentSourceId: checking.id,
+  });
+  const next = applyImport(state, drafts, card.id);
+
+  const written = next.transactions.filter((tx) => !tx.system);
+  assert.equal(written.length, 9, 'eight rows, with the payment recorded as two legs');
+  assert.ok(written.every((tx) => Boolean(tx.postedDate)), 'charges, the refund and both transfer legs');
+
+  // The payment moved money once, so its two legs agree on when it was posted.
+  const legs = written.filter((tx) => tx.transferId);
+  assert.equal(legs.length, 2);
+  assert.equal(legs[0]?.postedDate, '2026-05-31', "the statement's posting date, not its transaction date");
+  assert.equal(legs[1]?.postedDate, legs[0]?.postedDate);
+});
+
+test('a statement that prints one date gives every row that date as its posting date', () => {
+  const state = baseState();
+  const checking = account(state, 'Everyday Checking');
+
+  // Most bank statements print a single date column, and that column *is* the
+  // posting date. Keeping it is what lets a re-import recognise the row.
+  const drafts = buildDrafts(state, [row({ date: '2026-06-05', postedDate: null })], {
+    accountId: checking.id,
+  });
+  assert.equal(drafts[0]?.postedDate, '2026-06-05');
+
+  const next = applyImport(state, drafts, checking.id);
+  const tx = must(next.transactions.find((t) => t.payee === 'Test merchant'), 'the imported row');
+  assert.equal(tx.postedDate, '2026-06-05');
+  assert.equal(buildDrafts(next, [row({ date: '2026-06-05', postedDate: null })], {
+    accountId: checking.id,
+  })[0]?.duplicateBy, 'posted');
+});
+
+test('the posting date recognises a row whose own date has since been changed', () => {
+  let state = baseState();
+  const card = account(state, 'BDO Visa');
+  const statementRow = row({ date: '2026-06-05', postedDate: '2026-06-07', amount: 1_000_00 });
+
+  state = applyImport(state, buildDrafts(state, [statementRow], { accountId: card.id }), card.id);
+  const tx = must(state.transactions.find((t) => t.payee === 'Test merchant'), 'the imported row');
+  assert.equal(tx.postedDate, '2026-06-07', "the bank's own date is what was kept");
+
+  // Someone corrects the date to when they actually bought the thing — five
+  // weeks away, far outside the window the old check had to rely on.
+  state = actions.updateTransaction(state, tx.id, { date: '2026-07-14' });
+
+  const again = buildDrafts(state, [statementRow], { accountId: card.id });
+  assert.equal(again[0]?.duplicateOf, tx.id);
+  assert.equal(again[0]?.duplicateBy, 'posted');
+  assert.equal(again[0]?.include, false);
+});
+
+test('one transaction cannot absorb two rows posted on the same day', () => {
+  let state = baseState();
+  const card = account(state, 'BDO Visa');
+  const coffee = row({ id: 'a', date: '2026-06-05', postedDate: '2026-06-06', description: 'Coffee', amount: 180_00 });
+
+  state = applyImport(state, buildDrafts(state, [coffee], { accountId: card.id }), card.id);
+
+  // The next statement carries two of them: one is the row already imported, the
+  // other is a second cup. An exact posting date is certainty about *a* row, not
+  // a licence to swallow every row that shares it.
+  const drafts = buildDrafts(state, [coffee, { ...coffee, id: 'b' }], { accountId: card.id });
+  assert.equal(drafts[0]?.duplicateBy, 'posted');
+  assert.equal(drafts[1]?.duplicateOf, null);
+  assert.equal(importTotals(drafts).selected, 1);
+});
+
 /* ── Learning from the ledger ─────────────────────────────────────────── */
 
 test('a payee is matched despite the noise statements add to it', () => {
@@ -457,6 +567,88 @@ test('an incoming row marked as a transfer arrives from the other account', () =
   assert.equal(accountBalance(next, checking.id), 10_000_00 + 3_000_00);
   assert.equal(accountBalance(next, savings.id), 20_000_00 - 3_000_00);
   assertBalanced(next, 'incoming transfer');
+});
+
+test('a row naming one of your own accounts is read as moving money, not spending', () => {
+  let state = baseState();
+  state = actions.addAccount(state, {
+    name: 'BPI Savings', type: 'savings', provider: 'BPI', openingBalance: 20_000_00,
+    openedOn: '2026-06-01',
+  });
+  const checking = account(state, 'Everyday Checking');
+  const savings = account(state, 'BPI Savings');
+  const groceries = category(state, 'Groceries');
+
+  // History that would otherwise hand this payee a category, so the assertion
+  // below is about the role and not about there being nothing to guess.
+  state = actions.addTransaction(state, {
+    date: '2026-05-02', accountId: checking.id, categoryId: groceries.id,
+    payee: 'FUND TRANSFER TO BPI SAVINGS', amount: -1_000_00, kind: 'expense',
+  });
+
+  const drafts = buildDrafts(
+    state,
+    [row({ description: 'FUND TRANSFER TO BPI SAVINGS', amount: 5_000_00 })],
+    { accountId: checking.id },
+  );
+  assert.equal(drafts[0]?.role, 'transfer');
+  assert.equal(drafts[0]?.fromAccountId, savings.id, 'the account it names is the other side');
+  assert.equal(drafts[0]?.categoryId, null, 'moving your own money is not spending, so it needs no category');
+
+  const next = applyImport(state, drafts, checking.id);
+  const legs = next.transactions.filter((t) => t.transferId);
+  assert.equal(legs.length, 2, 'a transfer is a linked pair');
+  assert.ok(legs.every((leg) => leg.categoryId === null), 'neither leg is categorised');
+  assert.equal(accountBalance(next, checking.id), 10_000_00 - 1_000_00 - 5_000_00);
+  assert.equal(accountBalance(next, savings.id), 25_000_00);
+  // Nothing was spent, so the month's spending and Ready to assign are untouched.
+  assert.equal(buildLedger(next, MONTH).get(MONTH)?.unbudgeted, 0);
+  assert.equal(reconcile(next, MONTH).readyToAssign, reconcile(state, MONTH).readyToAssign);
+  assertBalanced(next, 'recognised transfer');
+});
+
+test('a move needs both the wording and an account you actually hold', () => {
+  let state = baseState();
+  state = actions.addAccount(state, {
+    name: 'BPI Savings', type: 'savings', provider: 'BPI', openingBalance: 0, openedOn: '2026-06-01',
+  });
+  const checking = account(state, 'Everyday Checking');
+  const drafts = buildDrafts(
+    state,
+    [
+      // A movement, but to someone else's number: this money really did leave.
+      row({ id: 'a', description: 'TRANSFER TO 09171234567' }),
+      // Your bank's name on an ordinary charge is not a movement.
+      row({ id: 'b', description: 'BPI SAVINGS ACCOUNT FEE' }),
+    ],
+    { accountId: checking.id },
+  );
+  assert.deepEqual(drafts.map((draft) => draft.role), ['expense', 'expense']);
+  assert.ok(drafts.every((draft) => draft.fromAccountId === null));
+});
+
+test('a card payment takes its source from the account the row names', () => {
+  let state = baseState();
+  state = actions.addAccount(state, {
+    name: 'BPI Savings', type: 'savings', provider: 'BPI', openingBalance: 20_000_00,
+    openedOn: '2026-06-01',
+  });
+  const card = account(state, 'BDO Visa');
+  const savings = account(state, 'BPI Savings');
+  const checking = account(state, 'Everyday Checking');
+
+  const drafts = buildDrafts(
+    state,
+    [row({ description: 'AUTO DEBIT PAYMENT FROM BPI SAVINGS', amount: 4_000_00, direction: 'credit' })],
+    { accountId: card.id, paymentSourceId: checking.id },
+  );
+  assert.equal(drafts[0]?.role, 'payment', 'it is still a payment to the card');
+  assert.equal(drafts[0]?.fromAccountId, savings.id, 'the statement said where it came from');
+
+  const next = applyImport(state, drafts, card.id);
+  assert.equal(accountBalance(next, savings.id), 20_000_00 - 4_000_00);
+  assert.equal(accountBalance(next, checking.id), 10_000_00, 'the default source was left alone');
+  assertBalanced(next, 'payment from the account it named');
 });
 
 test('uncategorised imported spending is reported, not silently absorbed', () => {

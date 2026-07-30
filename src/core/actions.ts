@@ -24,6 +24,12 @@ export interface TransferInput {
   toAccountId: string;
   amount: Cents;
   date?: ISODate;
+  /**
+   * When the bank posted it, when a statement says. Carried by both legs and by
+   * the fee: one movement, one posting date, so re-importing either side's
+   * statement recognises the leg it already wrote.
+   */
+  postedDate?: ISODate | null;
   payee?: string;
   memo?: string;
   cleared?: boolean;
@@ -43,6 +49,7 @@ export interface PaymentInput {
   fromAccountId: string;
   amount: Cents;
   date?: ISODate;
+  postedDate?: ISODate | null;
   memo?: string;
 }
 
@@ -536,16 +543,22 @@ export function updateTransaction(state: AppState, transactionId: string, patch:
   // Editing one leg of a transfer must keep the mirror leg in step. Only the
   // two transfer legs mirror each other: a fee attached to the same transferId
   // is an expense in its own right and must keep its own amount.
-  if (existing.transferId && existing.kind === 'transfer' && (patch.amount != null || patch.date)) {
+  //
+  // The dates travel together — one movement was posted once, so a posted date
+  // corrected on either leg belongs to both, and to the fee that rode along.
+  const datePatch = {
+    ...(patch.date ? { date: patch.date } : {}),
+    ...('postedDate' in patch ? { postedDate: patch.postedDate || null } : {}),
+  };
+  const mirrors = patch.amount != null || Object.keys(datePatch).length > 0;
+  if (existing.transferId && existing.kind === 'transfer' && mirrors) {
     const transactions = state.transactions.map((t) => {
       if (t.id === transactionId) return { ...t, ...patch };
       if (t.transferId !== existing.transferId) return t;
-      if (t.kind !== 'transfer') {
-        return patch.date ? { ...t, date: patch.date } : t;
-      }
+      if (t.kind !== 'transfer') return { ...t, ...datePatch };
       return {
         ...t,
-        ...(patch.date ? { date: patch.date } : {}),
+        ...datePatch,
         ...(patch.amount != null ? { amount: -patch.amount } : {}),
       };
     });
@@ -578,7 +591,7 @@ export function deleteTransaction(state: AppState, transactionId: string): AppSt
 export function addTransfer(
   state: AppState,
   {
-    fromAccountId, toAccountId, amount, date, payee, memo, cleared, fee, feeCategoryId,
+    fromAccountId, toAccountId, amount, date, postedDate, payee, memo, cleared, fee, feeCategoryId,
   }: TransferInput,
 ): AppState {
   if (!fromAccountId || !toAccountId || fromAccountId === toAccountId || !amount) return state;
@@ -598,6 +611,7 @@ export function addTransfer(
 
   const outflow = makeTransaction({
     date: when,
+    postedDate: postedDate ?? null,
     accountId: fromAccountId,
     categoryId: paymentCategory?.id ?? null,
     payee: label,
@@ -609,7 +623,11 @@ export function addTransfer(
   });
   const inflow = makeTransaction({
     date: when,
+    postedDate: postedDate ?? null,
     accountId: toAccountId,
+    // Money moved between your own accounts is not spending: nothing left, so
+    // no envelope changes and neither leg carries a category. The one exception
+    // is above — paying a debt spends the envelope that debt filled.
     categoryId: null,
     payee: payee || `Transfer from ${from?.name ?? 'account'}`,
     memo: memo || '',
@@ -629,6 +647,7 @@ export function addTransfer(
     legs.push(
       makeTransaction({
         date: when,
+        postedDate: postedDate ?? null,
         accountId: fromAccountId,
         categoryId: feeCategoryId,
         payee: `${to?.name ?? 'Transfer'} — fee`,
@@ -645,12 +664,16 @@ export function addTransfer(
 }
 
 /** Convenience wrapper used by the card views. */
-export function payCard(state: AppState, { cardId, fromAccountId, amount, date, memo }: PaymentInput): AppState {
+export function payCard(
+  state: AppState,
+  { cardId, fromAccountId, amount, date, postedDate, memo }: PaymentInput,
+): AppState {
   return addTransfer(state, {
     fromAccountId,
     toAccountId: cardId,
     amount,
     date,
+    postedDate,
     memo,
     payee: `Payment to ${state.accounts.find((a) => a.id === cardId)?.name ?? 'card'}`,
   });
@@ -682,11 +705,14 @@ export function toCsv(state: AppState): string {
   const accounts = new Map(state.accounts.map((a) => [a.id, a.name]));
   const categories = new Map(state.categories.map((c) => [c.id, c.name]));
   const escape = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
-  const rows: string[][] = [['Date', 'Account', 'Payee', 'Category', 'Memo', 'Amount', 'Kind', 'Cleared']];
+  const rows: string[][] = [
+    ['Date', 'Posted', 'Account', 'Payee', 'Category', 'Memo', 'Amount', 'Kind', 'Cleared'],
+  ];
   const sorted = [...state.transactions].sort((a, b) => (a.date < b.date ? 1 : -1));
   for (const tx of sorted) {
     rows.push([
       tx.date,
+      tx.postedDate ?? '',
       (tx.accountId && accounts.get(tx.accountId)) || '',
       tx.payee,
       (tx.categoryId && categories.get(tx.categoryId)) || '',

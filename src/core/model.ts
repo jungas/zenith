@@ -352,6 +352,19 @@ export interface Category {
 export interface Transaction {
   id: string;
   date: ISODate;
+  /**
+   * The date the bank posted this, as printed on the statement it came from —
+   * the posting date when a statement prints both dates, otherwise the single
+   * date it prints. Null when nothing has said: a transaction typed in by hand
+   * has no bank record behind it yet.
+   *
+   * `date` is when the money moved and is the only date the budget uses; this
+   * one is the bank's own record of the row, which is why it is stored even when
+   * the two are equal. It is what a re-imported statement is matched against, so
+   * the same row cannot arrive twice however far `date` has since been edited —
+   * see `findDuplicate` in `core/statement-import.ts`.
+   */
+  postedDate?: ISODate | null;
   accountId: string | null;
   categoryId: string | null;
   payee: string;
@@ -592,6 +605,10 @@ export function makeTransaction(patch: Partial<Transaction> = {}): Transaction {
     cleared: false,
     transferId: null,
     ...patch,
+    // Normalised rather than trusted: an empty date input hands over `''`, and
+    // an empty string is a date no comparison would ever match, which would
+    // quietly cost the duplicate check the anchor it exists for.
+    postedDate: patch.postedDate || null,
   };
 }
 

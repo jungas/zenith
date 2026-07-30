@@ -10,7 +10,7 @@ dependency.
 ```bash
 npm install
 npm start         # builds, then serves http://localhost:4173
-npm test          # type-checks, then runs 208 tests
+npm test          # type-checks, then runs 217 tests
 npm run typecheck # types only
 npm run build     # dist/*.js + sw.js, stamped with a shell version
 npm run icons     # regenerate the app icons
@@ -512,6 +512,33 @@ assign. Imported as a transfer it is correctly uncategorised and changes nothing
 but where the money sits. A transfer with no account chosen on the other side is
 **skipped rather than approximated**, for the same reason a card payment is.
 
+**Moving money between your own accounts needs no category, so it is never asked
+for one.** Both legs are uncategorised — nothing was spent, so no envelope
+changes — and the import recognises the case itself when the statement gives it
+away. Two things have to be true: wording that means a movement (`TRANSFER`,
+`TOP-UP`, `AUTO DEBIT`, `PAYMENT TO`…) *and* the name or bank of an account you
+actually hold. So `FUND TRANSFER TO BPI SAVINGS` is read as a move to that
+account, with the other side already filled in and no category guessed for it,
+while `TRANSFER TO 09171234567` is not — nothing in it names an account you keep
+here — and neither is `BPI SAVINGS ACCOUNT FEE`, because nothing about it moved.
+Both halves are required precisely because either alone is a guess: an account
+name turns up on plenty of ordinary charges, and plenty of transfers go to other
+people.
+
+It stays a proposal. The row says which account it picked and why — *"This row
+names GCash, one of your own accounts, so it is read as moving money rather than
+spending it"* — and one press turns it back into spending, which is what a `GCASH
+TRANSFER TO 09171234567` that went to somebody else's number needs.
+
+The same signal improves a card payment rather than reclassifying it: a statement
+that says `AUTO DEBIT PAYMENT FROM BPI SAVINGS` has named the account the money
+left, which is better than the default the app would otherwise offer.
+
+The one movement between your own accounts that *is* categorised is paying a card
+or a loan, and only on the leg that leaves the asset account: it spends the
+payment envelope your card spending filled. Without that the cash would leave
+with no envelope falling to match it — see § The invariant.
+
 ### It checks its own work
 
 A statement states what you owe. After an import, the card should agree with it
@@ -542,12 +569,49 @@ rewriting it silently would be worse than the discrepancy.
 
 ### Nothing is saved until you say so
 
-The parse produces *proposals*. Every row is shown with its date, payee,
-category and amount all editable, and anything that looks like a transaction
-already in the ledger arrives unticked, naming the one it matched. Categories
-are guessed from your own history — the category that payee went to last time —
-rather than from a shipped merchant list that would be wrong for anyone whose
-spending does not look like the author's.
+The parse produces *proposals*. Every row is shown with its date, its posted
+date, payee, category and amount all editable, and anything that looks like a
+transaction already in the ledger arrives unticked, naming the one it matched.
+Categories are guessed from your own history — the category that payee went to
+last time — rather than from a shipped merchant list that would be wrong for
+anyone whose spending does not look like the author's.
+
+### The same statement twice is a no-op
+
+Statements get re-sent, re-downloaded and re-imported, so every transaction
+carries a **posted date** alongside the date the money moved:
+
+```ts
+{ date: '2026-05-21', postedDate: '2026-05-22', payee: 'SM Supermarket Sucat', … }
+```
+
+`date` is when the money moved and is the only date the budget uses. `postedDate`
+is the bank's own date for the row — the posting date when a statement prints
+both, otherwise the single date it prints — and it is stored even when the two are
+equal, because it is the anchor a second import matches on. Every shape gets one:
+charges, refunds, ordinary spending and income, and **both legs of a transfer**,
+including a card payment and any fee riding along, because one movement was posted
+once. A posting date corrected on either leg travels to the other.
+
+That gives the duplicate check a fact instead of a resemblance:
+
+1. **Same account, same amount, same posted date** — the statement said this row
+   was posted that day, and a statement does not change its mind. The row is
+   recognised however far its `date` has since been edited, with no window
+   involved: *"Already in your ledger, posted the same day (22 May 2026)."*
+2. **Same amount within a few days** — the older heuristic, still the only one
+   available against a transaction typed in by hand.
+
+Certainties are matched first, and one existing transaction can still only absorb
+one row: two coffees at the same price on the same day are a real thing, so the
+second stays new. Re-importing a whole statement therefore arrives entirely
+unticked, and importing it anyway writes nothing —
+`tests/statement-import.test.ts` runs the BDO fixture through twice and pins that
+the ledger, both account balances and the reconciliation identity are unchanged.
+
+A posted date can also be filled in by hand on the transaction form, which is
+what makes a payment you recorded yourself recognisable when its statement
+arrives.
 
 What it will not do: read a **scanned** statement. If the PDF is a photograph of
 a page rather than text, there is nothing to extract, and the app says so instead

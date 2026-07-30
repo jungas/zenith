@@ -227,6 +227,13 @@ export function transactionRow(tx: Transaction, state: AppState, money: Required
       ),
       h('span.tx-amount', null, moneyText(tx.amount, { money, signed: true })),
     ),
-    h('span.tx-date', { text: formatDateShort(tx.date, money.locale) }),
+    // The posted date is the bank's date for the row, not the budget's, so it
+    // stays out of the line and explains itself on hover when it differs.
+    h('span.tx-date', {
+      text: formatDateShort(tx.date, money.locale),
+      title: tx.postedDate && tx.postedDate !== tx.date
+        ? `Posted ${formatDateShort(tx.postedDate, money.locale)}`
+        : null,
+    }),
   );
 }
