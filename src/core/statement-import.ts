@@ -43,6 +43,13 @@ export type RowRole = 'charge' | 'refund' | 'payment' | 'expense' | 'income' | '
 export interface ImportDraft {
   rowId: string;
   date: ISODate;
+  /**
+   * The date the statement itself gives this row: its posting date when the
+   * statement prints both, otherwise the single date it prints. Written into the
+   * transaction, which is what makes importing the same statement twice a
+   * recognised no-op rather than a second copy of every row.
+   */
+  postedDate: ISODate | null;
   payee: string;
   memo: string;
   /** Signed cents from the account's point of view. */
@@ -56,6 +63,13 @@ export interface ImportDraft {
   fromAccountId: string | null;
   /** The id of an existing transaction this looks like, if any. */
   duplicateOf: string | null;
+  /**
+   * How that match was made. `posted` is the bank's own posting date agreeing
+   * exactly, which is certainty; `near` is the older heuristic of the same
+   * amount within a few days, which is a likeness. The review screen says which,
+   * because the two deserve different amounts of trust.
+   */
+  duplicateBy: 'posted' | 'near' | null;
   /** Unticked rows are not imported. Duplicates start unticked. */
   include: boolean;
 }
@@ -148,30 +162,170 @@ function daysApart(a: ISODate, b: ISODate): number {
   return Math.abs(Math.round((parse(a) - parse(b)) / 86_400_000));
 }
 
+/** What an existing transaction was matched on, and how strongly. */
+export interface DuplicateMatch {
+  transaction: Transaction;
+  by: 'posted' | 'near';
+}
+
 /**
  * Find an existing transaction that is probably this same row.
  *
- * Same account, same amount to the peso, and within a few days — a statement's
- * posting date rarely matches the date you typed in. `used` stops one existing
- * transaction from absorbing two identical statement rows, because two coffees
- * on the same day at the same price is a real thing that happens.
+ * Two matches, in order of how much they are worth:
+ *
+ *  1. **The bank's own posting date, exactly.** Same account, same amount, same
+ *     posted date — the statement said this row was posted on that day, and a
+ *     statement does not change its mind. This is what makes re-importing a
+ *     statement a no-op: the second pass recognises every row it wrote the first
+ *     time, however far the transaction's own `date` has since been edited, and
+ *     whether or not it still sits inside any window.
+ *  2. **Same amount, within a few days.** The older heuristic, and still the only
+ *     one available against a transaction typed in by hand or a statement that
+ *     prints one date and calls it neither: a posting date rarely matches the
+ *     date a person remembers.
+ *
+ * `used` stops one existing transaction from absorbing two identical statement
+ * rows, because two coffees on the same day at the same price is a real thing
+ * that happens.
  */
 export function findDuplicate(
   state: AppState,
   accountId: string,
-  draft: { date: ISODate; amount: Cents },
+  draft: { date: ISODate; postedDate?: ISODate | null; amount: Cents },
   used: Set<string>,
-): Transaction | null {
+  { exactOnly = false }: { exactOnly?: boolean } = {},
+): DuplicateMatch | null {
   let best: Transaction | null = null;
   let bestDistance = Number.POSITIVE_INFINITY;
+
   for (const tx of state.transactions) {
     if (tx.accountId !== accountId || used.has(tx.id)) continue;
     if (tx.amount !== draft.amount) continue;
-    const distance = daysApart(tx.date, draft.date);
+
+    if (draft.postedDate && tx.postedDate && tx.postedDate === draft.postedDate) {
+      return { transaction: tx, by: 'posted' };
+    }
+    if (exactOnly) continue;
+
+    // Either date may be the one that drifted, so the nearest pairing decides.
+    // A row imported by its posting date and then re-read off a statement that
+    // leads with the transaction date is one movement, not two.
+    const distance = Math.min(
+      daysApart(tx.date, draft.date),
+      tx.postedDate ? daysApart(tx.postedDate, draft.date) : Number.POSITIVE_INFINITY,
+      draft.postedDate ? daysApart(tx.date, draft.postedDate) : Number.POSITIVE_INFINITY,
+      tx.postedDate && draft.postedDate
+        ? daysApart(tx.postedDate, draft.postedDate)
+        : Number.POSITIVE_INFINITY,
+    );
     if (distance > DUPLICATE_WINDOW_DAYS) continue;
     if (distance < bestDistance) {
       bestDistance = distance;
       best = tx;
+    }
+  }
+  return best ? { transaction: best, by: 'near' } : null;
+}
+
+/**
+ * Match every row against the ledger, certainties first.
+ *
+ * Two passes rather than one, because the passes disagree about which row owns a
+ * transaction. A row whose posting date matches exactly *is* that transaction;
+ * letting an earlier row take it on a mere likeness would leave the certain
+ * match looking new, and import a row the ledger already holds.
+ */
+function matchDuplicates(
+  state: AppState,
+  accountId: string,
+  rows: Array<{ id: string; date: ISODate; postedDate: ISODate | null; amount: Cents }>,
+): Map<string, DuplicateMatch> {
+  const matches = new Map<string, DuplicateMatch>();
+  const used = new Set<string>();
+
+  for (const options of [{ exactOnly: true }, { exactOnly: false }]) {
+    for (const row of rows) {
+      if (matches.has(row.id)) continue;
+      const match = findDuplicate(state, accountId, row, used, options);
+      if (!match) continue;
+      matches.set(row.id, match);
+      used.add(match.transaction.id);
+    }
+  }
+  return matches;
+}
+
+/* ── Money moved between your own accounts ────────────────────────────── */
+
+/**
+ * Wording that means the money moved rather than being spent.
+ *
+ * Never enough on its own. `PAYMENT TO MERALCO` is spending and `TRANSFER TO
+ * 09171234567` went to somebody else; what makes a row an internal move is that
+ * it *names an account you hold*, which is the second half of the test below.
+ */
+const MOVE_WORDS =
+  /\b(transfer|xfer|top\s*-?\s*up|topup|cash\s*-?\s*in|remittance|payment\s+to|auto\s*debit|sweep|deposit\s+to|moved?\s+to|sen[dt]\s+to|load\s+to|funding)\b/i;
+
+/**
+ * Words that name a *kind* of account rather than one of yours, so they cannot
+ * identify one on their own. Without this, every card statement row mentioning
+ * "card" would look like a move to whichever account has the word in its name.
+ */
+const GENERIC_ACCOUNT_WORDS = new Set([
+  'account', 'accounts', 'savings', 'saving', 'checking', 'chequing', 'cheque', 'current',
+  'wallet', 'card', 'credit', 'debit', 'visa', 'mastercard', 'master', 'gold', 'platinum',
+  'classic', 'signature', 'infinite', 'bank', 'cash', 'main', 'joint', 'personal', 'digital',
+  'online', 'fund', 'funds', 'money', 'payment', 'payments', 'everyday', 'my', 'the',
+]);
+
+/** The strings that would identify this account in a statement's description. */
+function accountKeys(account: Account): string[] {
+  const keys = new Set<string>();
+  const name = normalisePayee(account.name);
+  // The whole name counts even when it is a generic word: someone whose account
+  // is called "Savings" reads `TRANSFER TO SAVINGS` as naming it, and is right.
+  if (name.length >= 3) keys.add(name);
+  const provider = normalisePayee(account.provider ?? '');
+  if (provider.length >= 3) keys.add(provider);
+  for (const token of name.split(' ')) {
+    if (token.length >= 3 && !GENERIC_ACCOUNT_WORDS.has(token)) keys.add(token);
+  }
+  return [...keys];
+}
+
+/**
+ * Which of your own accounts this row names, if any.
+ *
+ * Moving money between your own accounts is not spending — nothing left, so no
+ * envelope changes and no category is wanted (see `core/budget.ts`). Nothing on
+ * a statement announces that, so the two things asked for here are the two a
+ * statement can actually show: wording that means a movement, and the name or
+ * bank of an account you hold. Both, or the row stays what it looked like.
+ *
+ * It remains a proposal either way: the review screen shows the account it
+ * picked and the row can be switched straight back to spending.
+ */
+export function matchOwnAccount(
+  state: AppState,
+  description: string,
+  accountId: string,
+): Account | null {
+  if (!MOVE_WORDS.test(description)) return null;
+  const haystack = ` ${normalisePayee(description)} `;
+  if (haystack.trim().length < 3) return null;
+
+  let best: Account | null = null;
+  let bestKey = 0;
+  for (const account of state.accounts) {
+    if (account.id === accountId || account.archived) continue;
+    for (const key of accountKeys(account)) {
+      // The longest key wins, so "BPI Savings" beats a second account that only
+      // matched on the bank it shares with it.
+      if (haystack.includes(` ${key} `) && key.length > bestKey) {
+        best = account;
+        bestKey = key.length;
+      }
     }
   }
   return best;
@@ -202,27 +356,57 @@ export function buildDrafts(
   { accountId, memo = '', paymentSourceId = null }: DraftOptions,
 ): ImportDraft[] {
   const account = state.accounts.find((a) => a.id === accountId);
-  const used = new Set<string>();
 
-  return rows.map((row) => {
-    const role = roleFor(row, account);
+  // The date the statement gave this row — its posting date when the statement
+  // prints both, otherwise the single date it prints. Kept even when it equals
+  // `date`, because it is the bank's own record of the row and is what a second
+  // import of the same statement is matched against.
+  const dated = rows.map((row) => ({
+    id: row.id,
+    date: row.date,
+    postedDate: row.postedDate ?? row.date,
+    amount: signedAmount(row),
+  }));
+  const duplicates = matchDuplicates(state, accountId, dated);
+
+  return rows.map((row, index) => {
     const amount = signedAmount(row);
-    const duplicate = findDuplicate(state, accountId, { date: row.date, amount }, used);
-    if (duplicate) used.add(duplicate.id);
+    const posted = dated[index]?.postedDate ?? row.date;
+    const duplicate = duplicates.get(row.id) ?? null;
+
+    let role = roleFor(row, account);
+    let fromAccountId = role === 'payment' ? paymentSourceId : null;
+
+    // A row that names one of your own accounts moved money rather than spending
+    // it. On a card statement a credit that already reads as a payment keeps
+    // that role and only learns where the money came from, which the statement
+    // has just told us better than any default could.
+    const own = matchOwnAccount(state, row.description, accountId);
+    if (own && role === 'payment' && !isCredit(own)) {
+      fromAccountId = own.id;
+    } else if (own && role !== 'payment') {
+      role = 'transfer';
+      fromAccountId = own.id;
+    }
 
     return {
       rowId: row.id,
       date: row.date,
+      postedDate: posted,
       payee: row.description,
       memo,
       amount,
-      // Income has no category in this app, and a payment to a card is
-      // categorised by `addTransfer` itself — to the card's payment envelope.
+      // Income has no category in this app; a payment to a card is categorised
+      // by `addTransfer` itself — to the card's payment envelope; and money
+      // moved between your own accounts is not spending, so it gets none.
       categoryId:
-        role === 'income' || role === 'payment' ? null : guessCategoryId(state, row.description),
+        role === 'income' || role === 'payment' || role === 'transfer'
+          ? null
+          : guessCategoryId(state, row.description),
       role,
-      fromAccountId: role === 'payment' ? paymentSourceId : null,
-      duplicateOf: duplicate?.id ?? null,
+      fromAccountId,
+      duplicateOf: duplicate?.transaction.id ?? null,
+      duplicateBy: duplicate?.by ?? null,
       include: !duplicate,
     };
   });
@@ -288,6 +472,9 @@ export function applyImport(
         toAccountId: outgoing ? draft.fromAccountId : accountId,
         amount: Math.abs(draft.amount),
         date: draft.date,
+        // Both legs carry it: the movement was posted once, so importing the
+        // other account's statement later recognises the leg already written.
+        postedDate: draft.postedDate,
         payee: draft.payee,
         memo: draft.memo,
         cleared: true,
@@ -297,6 +484,7 @@ export function applyImport(
 
     next = addTransaction(next, {
       date: draft.date,
+      postedDate: draft.postedDate,
       accountId,
       // A refund is a positive *expense*: it belongs to the envelope it came
       // out of, and calling it income would add money the budget never received.

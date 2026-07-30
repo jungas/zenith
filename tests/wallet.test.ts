@@ -175,6 +175,29 @@ test('a fee also rides along when the date changes', () => {
   }
 });
 
+test('a posting date corrected on one leg travels across the transfer', () => {
+  let { state, checking, gcash, fees } = fixture();
+  state = actions.addTransfer(state, {
+    fromAccountId: gcash.id, toAccountId: checking.id, amount: 10_000,
+    date: `${JAN}-09`, postedDate: `${JAN}-09`, fee: 200, feeCategoryId: fees.id,
+  });
+  assert.ok(
+    state.transactions.every((tx) => tx.postedDate === `${JAN}-09`),
+    'one movement, one posting date — legs and fee alike',
+  );
+
+  const outflow = state.transactions.find((t) => t.kind === 'transfer' && t.amount < 0);
+  state = actions.updateTransaction(state, outflow!.id, { postedDate: `${JAN}-12` });
+
+  // The bank posted this once, so a corrected posting date belongs to both legs.
+  // Leaving the mirror behind would let the other account's statement import the
+  // same movement a second time.
+  for (const tx of state.transactions) {
+    assert.equal(tx.postedDate, `${JAN}-12`, `${tx.payee} should carry the corrected posting date`);
+    assert.equal(tx.date, `${JAN}-09`, 'the date the money moved is untouched');
+  }
+});
+
 test('pesos format and parse', () => {
   const opts = { currency: 'PHP', locale: 'en-PH' };
   assert.equal(formatMoney(123_456, opts), '₱1,234.56');

@@ -31,6 +31,7 @@ export interface TransactionFormOptions {
   defaults?: {
     kind?: TxKind;
     date?: ISODate;
+    postedDate?: ISODate;
     amount?: Cents;
     accountId?: string;
     fromAccountId?: string;
@@ -111,6 +112,14 @@ export function openTransactionForm({
     type: 'date',
     value: transaction?.date ?? defaults.date ?? todayISO(),
     required: true,
+  });
+  // Optional, and deliberately not defaulted to today: a posting date is
+  // something the bank says, not something to invent. It is what a statement
+  // import matches against, so filling it in here means a statement carrying
+  // this row will recognise it instead of proposing it a second time.
+  const postedInput = h<HTMLInputElement>('input.input', {
+    type: 'date',
+    value: transaction?.postedDate ?? defaults.postedDate ?? '',
   });
   const amountInput = moneyInput({
     value: transaction ? centsToInput(transaction.amount) : defaults.amount ? centsToInput(defaults.amount) : '',
@@ -228,6 +237,15 @@ export function openTransactionForm({
           hint: mode === 'expense' ? 'What you spent' : mode === 'income' ? 'What you received' : 'Amount to move',
         }),
       ),
+      h(
+        'div.form-grid',
+        null,
+        field('Posted date (optional)', postedInput, {
+          id: 'tx-posted',
+          hint: 'When the bank posted it, if you know. Keeps a statement from importing this twice.',
+        }),
+        h('div.field-spacer'),
+      ),
       isTransfer
         ? h(
             'div.form-grid',
@@ -269,6 +287,7 @@ export function openTransactionForm({
       const amount = Math.abs(parseMoney(amountInput.value));
       if (!amount) return showError('Enter an amount greater than zero.');
       const date = dateInput.value || todayISO();
+      const postedDate = postedInput.value || null;
 
       if (isTransfer) {
         if (fromSelect.value === toSelect.value) return showError('Pick two different accounts.');
@@ -279,6 +298,7 @@ export function openTransactionForm({
               toAccountId: toSelect.value,
               amount,
               date,
+              postedDate,
               payee: payeeInput.value.trim(),
               memo: memoInput.value.trim(),
               cleared: clearedInput.checked,
@@ -295,6 +315,7 @@ export function openTransactionForm({
       const signed = mode === 'income' ? amount : -amount;
       const patch: actions.TransactionDraft = {
         date,
+        postedDate,
         accountId: accountSelect.value,
         categoryId: mode === 'expense' ? categorySelect.value || null : null,
         payee: payeeInput.value.trim(),
