@@ -44,6 +44,23 @@ export interface TransferInput {
   feeCategoryId?: string | null;
 }
 
+/**
+ * Fields an existing transfer may be edited to. Everything is optional: what is
+ * left out keeps whatever the transfer already says. A fee cannot be added or
+ * removed here — it is spending, and adding some would be recording a
+ * transaction, not editing this one.
+ */
+export interface TransferPatch {
+  fromAccountId?: string;
+  toAccountId?: string;
+  amount?: Cents;
+  date?: ISODate;
+  postedDate?: ISODate | null;
+  payee?: string;
+  memo?: string;
+  cleared?: boolean;
+}
+
 export interface PaymentInput {
   cardId: string;
   fromAccountId: string;
@@ -661,6 +678,102 @@ export function addTransfer(
   }
 
   return { ...state, transactions: [...state.transactions, ...legs] };
+}
+
+/** The two legs of a transfer, plus anything else riding on the same id. */
+export function transferParts(
+  state: AppState,
+  transferId: string,
+): { outflow: Transaction | null; inflow: Transaction | null; extras: Transaction[] } {
+  let outflow: Transaction | null = null;
+  let inflow: Transaction | null = null;
+  const extras: Transaction[] = [];
+  for (const tx of state.transactions) {
+    if (tx.transferId !== transferId) continue;
+    // A fee shares the id but is an expense in its own right, not a leg.
+    if (tx.kind !== 'transfer') extras.push(tx);
+    else if (tx.amount < 0) outflow ??= tx;
+    else inflow ??= tx;
+  }
+  return { outflow, inflow, extras };
+}
+
+/**
+ * Edit an existing transfer, both legs at once.
+ *
+ * A transfer is a linked pair, so it cannot be edited the way a single
+ * transaction can: patching one leg would leave the other claiming a different
+ * amount, a different date or a different account, and every total in the app is
+ * computed from both. `updateTransaction` mirrors the fields it can, but the
+ * accounts and the category are decided by *which way round* the transfer goes,
+ * and only this knows that.
+ *
+ * The destination decides the category exactly as it does in `addTransfer`: pay a
+ * debt and the outflow leg spends that debt's payment envelope, so redirecting a
+ * transfer at a card earns the envelope, and redirecting it away from one gives
+ * it up. Anything else moves money between your own accounts, which is not
+ * spending and carries no category at all.
+ *
+ * The legs keep their ids, so undo, the ledger and anything holding a reference
+ * still point at the same rows.
+ */
+export function updateTransfer(state: AppState, transferId: string, patch: TransferPatch): AppState {
+  const { outflow, inflow } = transferParts(state, transferId);
+  if (!outflow || !inflow) return state;
+
+  const fromAccountId = patch.fromAccountId || outflow.accountId;
+  const toAccountId = patch.toAccountId || inflow.accountId;
+  // The same refusals as creating one: a transfer needs two different accounts
+  // and an amount, or it is not a movement of money.
+  if (!fromAccountId || !toAccountId || fromAccountId === toAccountId) return state;
+  const cents = Math.abs(Math.round(patch.amount ?? outflow.amount));
+  if (!cents) return state;
+
+  const date = patch.date || outflow.date;
+  const postedDate = 'postedDate' in patch ? patch.postedDate || null : outflow.postedDate ?? null;
+  const cleared = patch.cleared ?? outflow.cleared;
+  const memo = patch.memo ?? outflow.memo;
+
+  const to: Account | undefined = state.accounts.find((a) => a.id === toAccountId);
+  const from: Account | undefined = state.accounts.find((a) => a.id === fromAccountId);
+  const paymentCategory = isDebt(to) ? paymentCategoryFor(state, to.id) : null;
+  const payee = patch.payee?.trim();
+  const label = payee || `${paymentCategory ? 'Payment' : 'Transfer'} to ${to?.name ?? 'account'}`;
+
+  const transactions = state.transactions.map((tx) => {
+    if (tx.transferId !== transferId) return tx;
+    if (tx.id === outflow.id) {
+      return {
+        ...tx,
+        accountId: fromAccountId,
+        categoryId: paymentCategory?.id ?? null,
+        amount: -cents,
+        date,
+        postedDate,
+        payee: label,
+        memo,
+        cleared,
+      };
+    }
+    if (tx.id === inflow.id) {
+      return {
+        ...tx,
+        accountId: toAccountId,
+        categoryId: null,
+        amount: cents,
+        date,
+        postedDate,
+        payee: payee || `Transfer from ${from?.name ?? 'account'}`,
+        memo,
+        cleared,
+      };
+    }
+    // A fee is real spending in its own right: it keeps its amount and its
+    // category, and only follows the things it cannot disagree with — when the
+    // movement happened, and which account was charged for it.
+    return { ...tx, accountId: fromAccountId, date, postedDate, cleared };
+  });
+  return { ...state, transactions };
 }
 
 /** Convenience wrapper used by the card views. */

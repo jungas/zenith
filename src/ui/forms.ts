@@ -101,6 +101,23 @@ export function openTransactionForm({
     ? transaction.kind === 'transfer' ? 'transfer' : transaction.kind === 'income' ? 'income' : 'expense'
     : (defaults.kind === 'income' || defaults.kind === 'transfer' ? defaults.kind : 'expense');
 
+  /*
+   * Editing one leg of a transfer is editing the whole transfer, so the dialog
+   * has to be filled from the *pair* rather than from the leg that was clicked:
+   * From is whichever leg the money left, To is whichever it arrived in, and the
+   * amount is the movement rather than one leg's signed share of it. Saving goes
+   * through `updateTransfer`, which rewrites both legs and re-derives the
+   * category from the destination.
+   */
+  const transferId = transaction?.kind === 'transfer' ? transaction.transferId : null;
+  const legs = transferId ? actions.transferParts(state, transferId) : null;
+  // A leg whose partner is missing cannot be edited as a pair. Saving it then
+  // falls through to recording the movement properly, which repairs it.
+  const editingTransfer =
+    transferId && legs?.outflow && legs.inflow
+      ? { id: transferId, outflow: legs.outflow, inflow: legs.inflow, extras: legs.extras }
+      : null;
+
   const body = h('form.form', { onsubmit: (event: Event) => event.preventDefault() });
   const errorSlot = h('div.form-error-slot');
   const hintSlot = h('div.hint-slot');
@@ -122,7 +139,10 @@ export function openTransactionForm({
     value: transaction?.postedDate ?? defaults.postedDate ?? '',
   });
   const amountInput = moneyInput({
-    value: transaction ? centsToInput(transaction.amount) : defaults.amount ? centsToInput(defaults.amount) : '',
+    value: transaction
+      // A transfer's amount is the movement, not the sign the clicked leg gives it.
+      ? centsToInput(editingTransfer ? Math.abs(transaction.amount) : transaction.amount)
+      : defaults.amount ? centsToInput(defaults.amount) : '',
     required: true,
   });
   const payeeInput = input({
@@ -141,12 +161,17 @@ export function openTransactionForm({
   );
   const fromSelect = select(
     accountOptions(state, {
-      selected: defaults.fromAccountId ?? state.accounts.find((a) => !isCredit(a))?.id,
+      selected: editingTransfer?.outflow?.accountId
+        ?? defaults.fromAccountId
+        ?? state.accounts.find((a) => !isCredit(a))?.id,
     }),
   );
   const toSelect = select(
     accountOptions(state, {
-      selected: defaults.toAccountId ?? state.accounts.find((a) => isCredit(a))?.id ?? state.accounts[1]?.id,
+      selected: editingTransfer?.inflow?.accountId
+        ?? defaults.toAccountId
+        ?? state.accounts.find((a) => isCredit(a))?.id
+        ?? state.accounts[1]?.id,
     }),
   );
   const categorySelect = select(
@@ -263,7 +288,10 @@ export function openTransactionForm({
           ),
       // Cashing out of a wallet or wiring between banks usually costs something.
       // The fee is spending, so it needs a category like any other outflow.
-      isTransfer && !editing
+      // Offered while recording a movement — including one being reclassified
+      // from spending — but not while editing a transfer that already exists: a
+      // fee is a transaction of its own, and this dialog is editing this one.
+      isTransfer && !editingTransfer
         ? h(
             'div.form-grid',
             null,
@@ -272,6 +300,23 @@ export function openTransactionForm({
               hint: 'Charged to the sending account',
             }),
             field('Fee category', feeCategorySelect, { id: 'tx-fee-category' }),
+          )
+        : null,
+      // Said out loud, because the dialog is showing one leg of two and the fee
+      // it will not touch is invisible here.
+      editingTransfer
+        ? h(
+            'div.inline-note',
+            null,
+            icon('transfer', { size: 16 }),
+            h('p', {
+              text: editingTransfer.extras.length
+                ? `Both sides of this transfer are updated together. The ${formatMoney(
+                    Math.abs(editingTransfer.extras.reduce((total, fee) => total + fee.amount, 0)),
+                    money(),
+                  )} fee recorded with it keeps its own amount and category — edit it from the ledger.`
+                : 'Both sides of this transfer are updated together — it is one movement recorded in two accounts.',
+            }),
           )
         : null,
       field(isTransfer ? 'Description' : 'Payee', payeeInput, { id: 'tx-payee' }),
@@ -291,24 +336,45 @@ export function openTransactionForm({
 
       if (isTransfer) {
         if (fromSelect.value === toSelect.value) return showError('Pick two different accounts.');
+        const movement = {
+          fromAccountId: fromSelect.value,
+          toAccountId: toSelect.value,
+          amount,
+          date,
+          postedDate,
+          payee: payeeInput.value.trim(),
+          memo: memoInput.value.trim(),
+          cleared: clearedInput.checked,
+        };
+
+        // Editing an existing transfer edits it. Recording a second pair — which
+        // is what adding one here would do — would double every total the first
+        // one moved and leave two half-explanations of one movement.
+        if (editingTransfer) {
+          commit((s) => actions.updateTransfer(s, editingTransfer.id, movement), {
+            label: 'edit transfer',
+          });
+          closeModal();
+          undoToast('Transfer updated.');
+          return;
+        }
+
         commit(
-          (s) =>
-            actions.addTransfer(s, {
-              fromAccountId: fromSelect.value,
-              toAccountId: toSelect.value,
-              amount,
-              date,
-              postedDate,
-              payee: payeeInput.value.trim(),
-              memo: memoInput.value.trim(),
-              cleared: clearedInput.checked,
+          (s) => {
+            // Something recorded as spending turning out to be a transfer: the
+            // expense is replaced rather than joined, or the money would appear
+            // to have left twice.
+            const base = transaction ? actions.deleteTransaction(s, transaction.id) : s;
+            return actions.addTransfer(base, {
+              ...movement,
               fee: Math.abs(parseMoney(feeInput.value)),
               feeCategoryId: feeCategorySelect.value || null,
-            }),
-          { label: 'transfer' },
+            });
+          },
+          { label: transaction ? 'edit transaction' : 'transfer' },
         );
         closeModal();
-        undoToast('Transfer recorded.');
+        undoToast(transaction ? 'Recorded as a transfer.' : 'Transfer recorded.');
         return;
       }
 
@@ -326,7 +392,15 @@ export function openTransactionForm({
       };
 
       if (transaction) {
-        commit((s) => actions.updateTransaction(s, transaction.id, patch), { label: 'edit transaction' });
+        // A transfer reclassified as ordinary spending or income: the pair goes,
+        // because the other leg records money arriving somewhere it never did.
+        commit(
+          (s) =>
+            editingTransfer
+              ? actions.addTransaction(actions.deleteTransaction(s, transaction.id), patch)
+              : actions.updateTransaction(s, transaction.id, patch),
+          { label: 'edit transaction' },
+        );
         closeModal();
         undoToast('Transaction updated.');
       } else {
