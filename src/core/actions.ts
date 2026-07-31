@@ -70,6 +70,15 @@ export interface PaymentInput {
   memo?: string;
 }
 
+export interface LoanPaymentInput {
+  loanId: string;
+  fromAccountId: string;
+  amount: Cents;
+  date?: ISODate;
+  postedDate?: ISODate | null;
+  memo?: string;
+}
+
 /* ── Accounts ─────────────────────────────────────────────────────────── */
 
 export function addAccount(state: AppState, patch: AccountDraft): AppState {
@@ -789,6 +798,22 @@ export function payCard(
     postedDate,
     memo,
     payee: `Payment to ${state.accounts.find((a) => a.id === cardId)?.name ?? 'card'}`,
+  });
+}
+
+/** Convenience wrapper used by the loan views. */
+export function payLoan(
+  state: AppState,
+  { loanId, fromAccountId, amount, date, postedDate, memo }: LoanPaymentInput,
+): AppState {
+  return addTransfer(state, {
+    fromAccountId,
+    toAccountId: loanId,
+    amount,
+    date,
+    postedDate,
+    memo,
+    payee: `Payment to ${state.accounts.find((a) => a.id === loanId)?.name ?? 'loan'}`,
   });
 }
 

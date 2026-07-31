@@ -5,7 +5,7 @@ import { icon } from '../ui/icons.ts';
 import { statTile, statusPill, sectionHeader, emptyState } from '../ui/components.ts';
 import { meter, categoryBars } from '../ui/charts.ts';
 import {
-  openTransactionForm, openPaymentForm, openFundCardForm, openAccountForm, openPayBillForm,
+  openTransactionForm, openPaymentForm, openLoanPaymentForm, openFundCardForm, openAccountForm, openPayBillForm,
 } from '../ui/forms.ts';
 import { formatMoney } from '../core/money.ts';
 import {
@@ -239,10 +239,7 @@ export function dashboardView({ month = currentMonth() }: { month?: MonthKey } =
               h('button.btn.btn-sm.btn-primary', {
                 type: 'button',
                 text: 'Pay',
-                onclick: () =>
-                  openTransactionForm({
-                    defaults: { kind: 'transfer', toAccountId: snap.loan.id, amount: snap.loan.monthlyPayment },
-                  }),
+                onclick: () => openLoanPaymentForm(snap.loan.id),
               }),
             );
           }),

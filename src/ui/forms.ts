@@ -20,6 +20,7 @@ import type {
 import { billById, billSnapshot } from '../core/bills.ts';
 import { categoryRow, monthSummary } from '../core/budget.ts';
 import { cardSnapshot, type CardSnapshot } from '../core/cards.ts';
+import { loanSnapshot, type LoanSnapshot } from '../core/loans.ts';
 import { commit, getState, moneyOpts, undo } from '../store.ts';
 import * as actions from '../core/actions.ts';
 import type { AccountDraft, AppState } from '../core/model.ts';
@@ -544,6 +545,106 @@ function suggestedPayment(snapshot: CardSnapshot): Cents {
   if (snapshot.reserved > 0) return Math.min(snapshot.reserved, snapshot.balance);
   if (snapshot.statementBalance > 0) return snapshot.statementBalance;
   return snapshot.minimumPayment;
+}
+
+/* ── Loan payment ─────────────────────────────────────────────────────── */
+
+export function openLoanPaymentForm(loanId: string): void {
+  const state = getState();
+  const loan = state.accounts.find((a) => a.id === loanId);
+  if (!isLoan(loan)) return;
+  const snapshot = loanSnapshot(state, loan);
+  const sources = state.accounts.filter((a) => !a.archived && !isCredit(a) && !isLoan(a));
+  if (!sources.length) {
+    toast('Add a chequing or cash account to pay from.', { tone: 'warning' });
+    return;
+  }
+
+  const amountInput = moneyInput({ value: centsToInput(suggestedLoanPayment(snapshot)), required: true });
+  const dateInput = h<HTMLInputElement>('input.input', { type: 'date', value: todayISO(), required: true });
+  const fromSelect = select(accountOptions(state, { selected: sources[0].id, filter: (a) => !isCredit(a) && !isLoan(a) }));
+  const memoInput = input({ placeholder: 'Optional note' });
+  const errorSlot = h('div.form-error-slot');
+
+  const presets = [
+    { label: 'Monthly payment', value: snapshot.loan.monthlyPayment, hint: 'The agreed instalment' },
+    { label: 'Reserved in budget', value: snapshot.reserved, hint: 'Pay exactly what the budget has set aside' },
+    { label: 'Full balance', value: snapshot.balance, hint: 'Clears the loan to zero' },
+  ].filter((preset) => preset.value > 0);
+
+  const body = h(
+    'form.form',
+    { onsubmit: (event: Event) => event.preventDefault() },
+    h(
+      'div.pay-summary',
+      null,
+      h('div.pay-row', null, h('span', { text: 'Balance' }), h('strong', { text: formatMoney(snapshot.balance, money()) })),
+      h('div.pay-row', null, h('span', { text: 'Set aside in budget' }), h('strong', { text: formatMoney(snapshot.reserved, money()) })),
+      h(
+        'div.pay-row',
+        null,
+        h('span', { text: 'Coverage' }),
+        snapshot.readyForNextPayment
+          ? statusPill('good', 'Funded', { size: 'sm' })
+          : statusPill('warning', 'Not yet funded', { size: 'sm' }),
+      ),
+    ),
+    presets.length
+      ? h(
+          'div.preset-row',
+          null,
+          presets.map((preset) =>
+            h(
+              'button.preset',
+              {
+                type: 'button',
+                onclick: () => {
+                  amountInput.value = centsToInput(preset.value);
+                  amountInput.focus();
+                },
+                title: preset.hint,
+              },
+              h('span.preset-label', { text: preset.label }),
+              h('span.preset-value', { text: formatMoney(preset.value, { ...money(), cents: false }) }),
+            ),
+          ),
+        )
+      : null,
+    h('div.form-grid', null, field('Amount', amountInput, { id: 'loan-pay-amount' }), field('Date', dateInput, { id: 'loan-pay-date' })),
+    field('Pay from', fromSelect, { id: 'loan-pay-from' }),
+    field('Memo', memoInput, { id: 'loan-pay-memo' }),
+    errorSlot,
+  );
+
+  const submit = h('button.btn.btn-primary', {
+    type: 'button',
+    text: 'Record payment',
+    onclick: () => {
+      const amount = Math.abs(parseMoney(amountInput.value));
+      if (!amount) {
+        mount(errorSlot, h('p.form-error', null, icon('alert', { size: 15 }), h('span', { text: 'Enter an amount.' })));
+        return;
+      }
+      commit(
+        (s) => actions.payLoan(s, { loanId, fromAccountId: fromSelect.value, amount, date: dateInput.value, memo: memoInput.value.trim() }),
+        { label: 'loan payment' },
+      );
+      closeModal();
+      undoToast(`Payment of ${formatMoney(amount, money())} recorded.`);
+    },
+  });
+
+  openModal({
+    title: `Pay ${loan.name}`,
+    body,
+    footer: [h('div.foot-spacer'), h('button.btn', { type: 'button', text: 'Cancel', onclick: closeModal }), submit],
+  });
+}
+
+function suggestedLoanPayment(snapshot: LoanSnapshot): Cents {
+  if (snapshot.reserved > 0) return Math.min(snapshot.reserved, snapshot.balance);
+  if (snapshot.loan.monthlyPayment > 0) return Math.min(snapshot.loan.monthlyPayment, snapshot.balance);
+  return snapshot.balance;
 }
 
 /* ── Account ──────────────────────────────────────────────────────────── */
