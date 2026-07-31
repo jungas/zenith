@@ -7,14 +7,16 @@
  * before the due date. That is the whole difference, and it is why the two
  * share a payment envelope but almost nothing else.
  *
- * Progress is derived from the ledger and the calendar rather than stored, for
- * the same reason instalment plans are: a counter would need advancing by hand.
+ * Progress is derived from the ledger rather than stored, for the same reason
+ * instalment plans are: a counter would need advancing by hand. It counts
+ * payments actually recorded, not months elapsed on the calendar — a loan
+ * with no payment yet reads as none made, however long it has existed.
  */
 
 import { accountBalance, categoryRow, monthSummary } from './budget.ts';
 import { addMonths, compareMonths, currentMonth, daysBetween, nextDayOfMonth, todayISO } from './dates.ts';
 import { isLoan, paymentCategoryFor } from './model.ts';
-import type { AppState, Category, Cents, ISODate, LoanAccount, MonthKey } from './model.ts';
+import type { AppState, Category, Cents, ISODate, LoanAccount, MonthKey, Transaction } from './model.ts';
 
 export interface LoanSnapshot {
   loan: LoanAccount;
@@ -29,7 +31,7 @@ export interface LoanSnapshot {
   repaid: Cents;
   /** 0–1 against the original principal. */
   progress: number;
-  /** Payments made, by the calendar. */
+  /** Payments actually recorded against the loan, capped at its term. */
   paymentsMade: number;
   paymentsRemaining: number;
   /** The month the last payment falls in, when a term is known. */
@@ -47,11 +49,6 @@ export interface LoanSnapshot {
   monthlyInterestCost: Cents;
 }
 
-const monthIndex = (month: MonthKey): number => {
-  const [year = 0, part = 1] = month.split('-').map(Number);
-  return year * 12 + (part - 1);
-};
-
 export const loanAccounts = (
   state: AppState,
   { includeArchived = false }: { includeArchived?: boolean } = {},
@@ -61,6 +58,16 @@ export const loanAccounts = (
 /** Amount owed on a loan, returned positive. */
 export function loanBalance(state: AppState, loanId: string, throughISO: ISODate | null = null): Cents {
   return -accountBalance(state, loanId, throughISO) || 0;
+}
+
+/**
+ * Real payments recorded against a loan — money that actually moved in, not a
+ * scheduled month ticking by. A loan is only ever the destination of a
+ * payment, so its own inflow leg (the positive one) is the payment; a leg
+ * that draws the balance up instead is a disbursement, not a payment.
+ */
+export function loanPayments(state: AppState, loanId: string): Transaction[] {
+  return state.transactions.filter((t) => t.accountId === loanId && t.kind === 'transfer' && t.amount > 0);
 }
 
 export function loanSnapshot(
@@ -75,8 +82,8 @@ export function loanSnapshot(
 
   const term = Math.max(0, Math.round(loan.termMonths) || 0);
   const monthly = Math.max(0, Math.round(loan.monthlyPayment) || 0);
-  const elapsed = loan.startMonth ? monthIndex(month) - monthIndex(loan.startMonth) : -1;
-  const paymentsMade = term ? Math.min(term, Math.max(0, elapsed + 1)) : Math.max(0, elapsed + 1);
+  const payments = loanPayments(state, loan.id).length;
+  const paymentsMade = term ? Math.min(term, payments) : payments;
   const paymentsRemaining = term ? Math.max(0, term - paymentsMade) : 0;
 
   const principal = Math.max(0, loan.principal || 0);
