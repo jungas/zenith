@@ -512,7 +512,10 @@
   background: var(--wash);
   color: var(--text-primary);
   font: inherit;
-  font-size: var(--fs-sm);
+  /* Below 16px, iOS Safari zooms the whole page in on focus — this cell is
+   * tapped constantly on the budget screen, so it needs the mobile/PWA size
+   * floor, overridden back down to --fs-sm once the desktop layout kicks in. */
+  font-size: 16px;
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
@@ -1576,6 +1579,10 @@
     bottom: var(--sp-2);
     z-index: 5;
     box-shadow: var(--shadow-lg);
+  }
+
+  .cell-input {
+    font-size: var(--fs-sm);
   }
 }
 

@@ -548,7 +548,10 @@
   background: var(--surface-2);
   color: var(--text-primary);
   font: inherit;
-  font-size: var(--fs-base);
+  /* Below 16px, iOS Safari zooms the whole page in on focus — this is the
+   * mobile/PWA size floor, overridden back down to --fs-base once the
+   * desktop layout (and its non-touch focus) kicks in below. */
+  font-size: 16px;
 }
 
 .input:focus-visible {
@@ -855,6 +858,10 @@ select.input {
     right: var(--sp-5);
     bottom: var(--sp-5);
     transform: none;
+  }
+
+  .input {
+    font-size: var(--fs-base);
   }
 }
 
