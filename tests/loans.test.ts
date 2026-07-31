@@ -171,15 +171,28 @@ test('a loan reports where it is and what it costs', () => {
   assert.equal(snapshot.nextDueDate, '2026-07-05');
 });
 
-test('progress is derived, so a later month reads further along', () => {
-  const state = fixture();
-  assert.equal(loanSnapshot(state, loanOf(state), { month: JUN }).paymentsMade, 1);
-  assert.equal(loanSnapshot(state, loanOf(state), { month: '2027-06' }).paymentsMade, 13);
-  // Never past the end of its own term.
-  assert.equal(loanSnapshot(state, loanOf(state), { month: '2040-01' }).paymentsMade, 48);
-  assert.equal(loanSnapshot(state, loanOf(state), { month: '2040-01' }).paymentsRemaining, 0);
-  // Nor before it began.
-  assert.equal(loanSnapshot(state, loanOf(state), { month: '2026-01' }).paymentsMade, 0);
+test('progress counts payments actually made, not months elapsed', () => {
+  let state = fixture();
+  const chequing = account(state, 'Chequing').id;
+  const loanId = loanOf(state).id;
+
+  // Nothing has been paid yet, however far the calendar has run — a brand
+  // new loan reads as no payments made, not "one, because a month started".
+  assert.equal(loanSnapshot(state, loanOf(state), { month: JUN }).paymentsMade, 0);
+  assert.equal(loanSnapshot(state, loanOf(state), { month: '2027-06' }).paymentsMade, 0);
+
+  // Two real payments, two counted — whichever month the snapshot is asked for.
+  state = actions.addTransfer(state, { fromAccountId: chequing, toAccountId: loanId, amount: 12_000_00, date: '2026-06-05' });
+  state = actions.addTransfer(state, { fromAccountId: chequing, toAccountId: loanId, amount: 12_000_00, date: '2026-07-05' });
+  assert.equal(loanSnapshot(state, loanOf(state), { month: '2027-06' }).paymentsMade, 2);
+  assert.equal(loanSnapshot(state, loanOf(state), { month: '2027-06' }).paymentsRemaining, 46);
+
+  // Never past the end of its own term, however many payments land.
+  for (let i = 0; i < 50; i++) {
+    state = actions.addTransfer(state, { fromAccountId: chequing, toAccountId: loanId, amount: 12_000_00, date: '2026-08-05' });
+  }
+  assert.equal(loanSnapshot(state, loanOf(state), { month: '2027-06' }).paymentsMade, 48);
+  assert.equal(loanSnapshot(state, loanOf(state), { month: '2027-06' }).paymentsRemaining, 0);
 });
 
 test('totals say what every loan commits you to each month', () => {
