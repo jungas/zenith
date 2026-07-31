@@ -1177,6 +1177,9 @@
 }
 
 .account-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
   padding-right: var(--sp-3);
 }
 

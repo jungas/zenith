@@ -112,6 +112,28 @@ test('paying a loan spends its envelope and keeps the budget in step', () => {
   assertBalanced(state, 'after paying');
 });
 
+test('payLoan records a manual payment the same way a transfer would', () => {
+  let state = fixture();
+  const loan = loanOf(state);
+  const chequing = account(state, 'Chequing');
+  const envelope = must(paymentCategoryFor(state, loan.id), 'the envelope');
+
+  state = actions.setBudget(state, JUN, envelope.id, 12_000_00);
+  state = actions.payLoan(state, {
+    loanId: loan.id, fromAccountId: chequing.id, amount: 12_000_00, date: '2026-06-05', memo: 'June instalment',
+  });
+
+  assert.equal(cashOnHand(state), 100_000_00 - 12_000_00);
+  assert.equal(accountBalance(state, loan.id), -488_000_00, 'the loan owes less');
+  const outflow = must(
+    state.transactions.find((t) => t.accountId === chequing.id && t.transferId),
+    'the outflow leg',
+  );
+  assert.equal(outflow.categoryId, envelope.id, 'the envelope is spent, same as any other loan payment');
+  assert.equal(outflow.memo, 'June instalment');
+  assertBalanced(state, 'after payLoan');
+});
+
 test('an unbudgeted loan payment still adds up', () => {
   // Nobody budgeted for it, so the envelope goes negative — but the identity
   // holds either way, which is the whole point of routing it through one.

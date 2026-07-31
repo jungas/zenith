@@ -3,7 +3,7 @@
 import { h, append } from '../ui/dom.ts';
 import { icon } from '../ui/icons.ts';
 import { statTile, sectionHeader, emptyState, moneyText } from '../ui/components.ts';
-import { openAccountForm, openTransactionForm } from '../ui/forms.ts';
+import { openAccountForm, openLoanPaymentForm, openTransactionForm } from '../ui/forms.ts';
 import { formatMoney, formatPercent } from '../core/money.ts';
 import { accountBalances, cashOnHand, netWorth, totalOwed } from '../core/budget.ts';
 import { ACCOUNT_TYPES, isCredit, isLoan, SAVINGS_CREDIT_FREQUENCIES } from '../core/model.ts';
@@ -151,6 +151,13 @@ export function accountsView(): HTMLElement {
               h(
                 'span.account-actions',
                 null,
+                isLoan(account) && balance < 0
+                  ? h('button.btn.btn-sm', {
+                      type: 'button',
+                      onclick: () => openLoanPaymentForm(account.id),
+                      text: 'Pay',
+                    })
+                  : null,
                 h('button.icon-btn', {
                   type: 'button',
                   'aria-label': `Edit ${account.name}`,
