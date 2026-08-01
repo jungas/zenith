@@ -22,6 +22,7 @@ import { dirname, join } from 'node:path';
 import { readPdfText } from '../src/core/pdf/read.ts';
 import { cleanDescription, detectIssuer, parseStatement } from '../src/core/statement.ts';
 import type { ParsedStatement, StatementRow } from '../src/core/statement.ts';
+import type { TextLine } from '../src/core/pdf/text.ts';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -203,4 +204,35 @@ test('descriptions soften shouting without mangling acronyms', () => {
 test('descriptions lose long reference numbers but keep the merchant', () => {
   assert.equal(cleanDescription('GRAB *TRIP  REF NO 8829301827'), 'Grab *TRIP');
   assert.equal(cleanDescription('SHOPEE PH 123456789012345'), 'Shopee PH');
+});
+
+/** A single-item line, which is all `readRow` needs when there is no column table to match against. */
+function line(text: string, page = 1): TextLine {
+  return { page, y: 0, text, items: [{ x: 0, endX: 100, y: 0, size: 10, text }], offsets: [0] };
+}
+
+test('a transaction date directly followed by a posting date reads as two dates, not one', () => {
+  // "June 30 July 1 …" — a spelled transaction date immediately followed by a
+  // spelled posting date, with nothing between them. Without a guard against a
+  // month name stealing the previous date's day, this reads as the single
+  // nonsense date "30 July": one wrong date instead of two right ones, and the
+  // description picks up the stray "1" the posting date's day left behind.
+  const parsed = parseStatement(
+    [line('June 30 July 1 General Store 99.00')],
+    { today: new Date(2026, 6, 1) },
+  );
+  assert.deepEqual(parsed.rows.map((r) => [r.date, r.postedDate, r.description, r.amount]), [
+    ['2026-06-30', '2026-07-01', 'General Store', 9900],
+  ]);
+});
+
+test('a day-month-year date is not split by the guard meant for back-to-back spelled dates', () => {
+  // "22 JUN 26" has to keep matching as one whole date — the guard added for
+  // the case above must not make a real "DD Month YY" lose its year to a
+  // narrower "Month DD" reading of the same text.
+  const parsed = parseStatement(
+    [line('Statement Date 22 JUN 26')],
+    { today: new Date(2026, 6, 1) },
+  );
+  assert.equal(parsed.summary.statementDate, '2026-06-22');
 });

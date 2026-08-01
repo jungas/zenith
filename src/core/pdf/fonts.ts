@@ -232,8 +232,74 @@ function standardWidths(baseFont: string | null): number[] | null {
   return null;
 }
 
+/**
+ * A `Type3` font whose every glyph is its own unlabeled bitmap.
+ *
+ * Rather than embed a real font program, this scheme draws each character as
+ * a tiny inline image (`BI ... /IM true ... ID <bits> EI`) inside its
+ * `CharProc`, and names the glyph after nothing more than its own code in hex
+ * (`C40`, `Cd7`, …). There is no `/ToUnicode` and the glyph names carry no
+ * meaning, so nothing here says a code is a "P" rather than a "7" — the
+ * shapes still print correctly, but copying the text does not. Some
+ * statement portals generate PDFs exactly this way specifically to defeat
+ * copy-paste and naive text extraction; a BPI "Statement of Account"
+ * downloaded from their web portal is the one this was recovered from.
+ *
+ * The table below maps that scheme's codes back to characters. It was
+ * recovered by hand — cross-referencing every string a real statement drew
+ * against what the rendered page actually shows, letter by letter — rather
+ * than guessed from glyph shape. It held identically across every one of the
+ * ten-plus font resources that one statement used (headers, table cells, the
+ * address block, the fine print), which is what a single fixed substitution
+ * table looks like rather than one re-rolled per document. Codes it does not
+ * cover — a handful of rare letters this statement never happened to use —
+ * decode to nothing rather than a guess, the same as any other undecodable
+ * glyph.
+ */
+const TYPE3_BITMAP_GLYPH_NAME = /^c[0-9a-f]{2}$/i;
+
+const TYPE3_BITMAP_CODE_TABLE: Record<number, string> = {
+  64: ' ', 75: '.', 96: '-', 97: '/', 107: ',', 108: '%', 124: '@', 125: "'",
+  129: 'a', 130: 'b', 131: 'c', 132: 'd', 133: 'e', 134: 'f', 135: 'g', 136: 'h',
+  137: 'i', 146: 'k', 147: 'l', 148: 'm', 149: 'n', 150: 'o', 151: 'p', 152: 'q',
+  153: 'r', 162: 's', 163: 't', 164: 'u', 165: 'v', 166: 'w', 167: 'x', 168: 'y', 169: 'z',
+  193: 'A', 194: 'B', 195: 'C', 196: 'D', 197: 'E', 198: 'F', 199: 'G', 200: 'H',
+  201: 'I', 209: 'J', 211: 'L', 212: 'M', 213: 'N', 214: 'O', 215: 'P', 217: 'R',
+  226: 'S', 227: 'T', 228: 'U', 230: 'W', 232: 'Y',
+  240: '0', 241: '1', 242: '2', 243: '3', 244: '4', 245: '5', 246: '6', 247: '7', 248: '8', 249: '9',
+};
+
+/**
+ * Does this font's `/Differences` look like the scheme above rather than a
+ * real glyph-name encoding?
+ *
+ * The naming convention (`C` + two hex digits) is cheap to recognise and does
+ * not need a CharProc opened to check it — which matters, because a font can
+ * carry hundreds of them. Requiring *every* named entry to match, over a
+ * real sample size, is what keeps an ordinary font that happens to name one
+ * glyph `Cfe` out of this path: a coincidence would have to repeat across
+ * the whole `/Differences` array, not just once.
+ */
+function looksLikeType3BitmapEncoding(doc: PdfDocument, dict: PdfDict): boolean {
+  const encoding = doc.resolve(dict.get('Encoding'));
+  if (!isDict(encoding)) return false;
+  const differences = doc.get(encoding, 'Differences');
+  if (!isArray(differences)) return false;
+  let named = 0;
+  let matching = 0;
+  for (const entry of differences) {
+    const value = doc.resolve(entry);
+    if (isName(value)) {
+      named++;
+      if (TYPE3_BITMAP_GLYPH_NAME.test(value.name)) matching++;
+    }
+  }
+  return named >= 8 && matching === named;
+}
+
 /** Simple fonts: one byte per code, widths indexed from `/FirstChar`. */
 function simpleFont(doc: PdfDocument, dict: PdfDict): PdfFont {
+  const isType3Bitmap = doc.name(dict.get('Subtype')) === 'Type3' && looksLikeType3BitmapEncoding(doc, dict);
   const table = (() => {
     const encoding = doc.resolve(dict.get('Encoding'));
     const baseName = isName(encoding)
@@ -249,7 +315,10 @@ function simpleFont(doc: PdfDocument, dict: PdfDict): PdfFont {
         for (const entry of differences) {
           const value = doc.resolve(entry);
           if (typeof value === 'number') code = Math.round(value);
-          else if (isName(value)) built[code++] = glyphNameToText(value.name);
+          else if (isName(value)) {
+            built[code] = isType3Bitmap ? (TYPE3_BITMAP_CODE_TABLE[code] ?? '') : glyphNameToText(value.name);
+            code++;
+          }
         }
       }
     }

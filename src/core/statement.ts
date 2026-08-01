@@ -218,8 +218,15 @@ function findDates(text: string): DateMatch[] {
     });
   }
   // 18 Jun 2026 / 18-JUN-26 / 18 June
+  //
+  // Guarded on the left against a month name immediately before the leading
+  // digit: without it, `June 30 July 1` — a transaction date directly
+  // followed by a posting date, with nothing between them — reads its own
+  // "30 July" as a single date, the day of one stealing the month of the
+  // next. That guard only has to look backward; a genuine `DD Month` never
+  // has a month name right before its own day.
   for (const m of text.matchAll(
-    new RegExp(String.raw`\b(\d{1,2})[\s\-./]*(${MONTH_PATTERN})[a-z]*\.?(?:[\s\-./,]+(\d{2,4}))?\b`, 'gi'),
+    new RegExp(String.raw`(?<!(?:${MONTH_PATTERN})[a-z]*\.?[\s\-./]*)\b(\d{1,2})[\s\-./]*(${MONTH_PATTERN})[a-z]*\.?(?:[\s\-./,]+(\d{2,4}))?\b`, 'gi'),
   )) {
     push({
       start: m.index ?? 0, end: (m.index ?? 0) + m[0].length,

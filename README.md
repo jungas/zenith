@@ -447,6 +447,27 @@ statement reader is not a good reason to acquire one:
 The cryptography is only ever used to *open* a file the person already has the
 password for, on their own device.
 
+### When the text itself is the thing being protected
+
+Encryption is not the only way a statement resists being read. Some portals
+generate a PDF where every glyph is its own unlabelled bitmap — a `Type3`
+font whose `CharProc` is a tiny inline image and whose glyph name is nothing
+but its own code in hex (`C40`, `Cd7`, …), with no `/ToUnicode` anywhere. The
+shapes still print correctly — copy the text out and it is noise. A BPI
+"Statement of Account" downloaded from their web portal reads exactly this
+way, and so, for the same reason, does `pdftotext`.
+
+`fonts.ts` recovers a fixed substitution table for that specific scheme —
+recovered by hand, cross-referencing what a real statement's rendered pages
+say against the codes its content stream actually draws, not guessed from
+glyph shape. It held identically across every font resource that one
+statement used, header to fine print, which is what a single table baked
+into the generator looks like rather than one re-rolled per document. A font
+is only read through it when its `/Differences` names are *all* of that
+`Cxx` shape over a real sample size — a coincidence would have to repeat
+across the whole array — and a code the table does not cover decodes to
+nothing rather than a guess, same as any other undecodable glyph.
+
 ### Columns, not spacing
 
 A PDF contains no rows and no columns — only instructions to place runs of
