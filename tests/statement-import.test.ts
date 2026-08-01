@@ -251,6 +251,49 @@ test('two identical rows are not both absorbed by one existing transaction', () 
   assert.equal(importTotals(drafts).selected, 1);
 });
 
+test('a bill paid ahead of its due date is recognised when the statement later posts it', () => {
+  let state = baseState();
+  const checking = account(state, 'Everyday Checking');
+  const groceries = category(state, 'Groceries');
+  state = actions.addBill(state, {
+    name: 'Electricity', payee: 'Meralco', amount: 1_500_00, cadence: 'monthly',
+    startDate: '2026-06-15', categoryId: groceries.id, accountId: checking.id,
+  });
+  const bill = must(state.bills.find((b) => b.name === 'Electricity'), 'the bill');
+
+  // Paid a week before the due date — a common autopay pattern — and recorded
+  // that same day rather than when the bank will actually post it.
+  state = actions.payBill(state, { billId: bill.id, dueDate: '2026-06-15', date: '2026-06-08' });
+
+  // The statement then posts it on the due date itself: eight days from when it
+  // was recorded, well past the ordinary four-day window.
+  const drafts = buildDrafts(
+    state,
+    [row({ date: '2026-06-15', description: 'Meralco', amount: 1_500_00 })],
+    { accountId: checking.id },
+  );
+  assert.ok(drafts[0]?.duplicateOf, 'the due date bridges the gap the payment date left');
+  assert.equal(drafts[0]?.duplicateBy, 'near');
+  assert.equal(drafts[0]?.include, false);
+});
+
+test('an ordinary transaction still needs the tight window a bill payment does not', () => {
+  let state = baseState();
+  const checking = account(state, 'Everyday Checking');
+  // Same shape as the bill case, minus the billId: eight days apart is still
+  // too far for a transaction with no due date to anchor the match on.
+  state = actions.addTransaction(state, {
+    date: '2026-06-08', accountId: checking.id, payee: 'Meralco', amount: -1_500_00, kind: 'expense',
+  });
+
+  const drafts = buildDrafts(
+    state,
+    [row({ date: '2026-06-15', description: 'Meralco', amount: 1_500_00 })],
+    { accountId: checking.id },
+  );
+  assert.equal(drafts[0]?.duplicateOf, null, 'no billId, no widened window');
+});
+
 /* ── The posting date, and importing a statement twice ────────────────── */
 
 test('importing the same statement twice adds nothing the second time', () => {

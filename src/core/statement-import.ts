@@ -98,6 +98,18 @@ export function willBeWritten(draft: ImportDraft): boolean {
 /** How many days apart two transactions may be and still be the same one. */
 const DUPLICATE_WINDOW_DAYS = 4;
 
+/**
+ * The same window, widened for a transaction that settles a bill.
+ *
+ * A bill is commonly paid well ahead of, or after, the date it is entered
+ * against — an autopay scheduled days before the due date, a person recording
+ * the payment on the day they set it up rather than the day it clears. Four
+ * days is too tight for that gap; the `billId` on the transaction is itself
+ * strong evidence the row and the payment are the same thing, so a wider
+ * window here does not trade away much certainty.
+ */
+const BILL_DUPLICATE_WINDOW_DAYS = 10;
+
 /** A card credit whose wording means "you paid this bill", not "you were refunded". */
 const CARD_PAYMENT_WORDS = /^payment\b|\bpayment\s+received\b|\bthank\s*you\b|^auto\s*debit\b/i;
 
@@ -217,8 +229,15 @@ export function findDuplicate(
       tx.postedDate && draft.postedDate
         ? daysApart(tx.postedDate, draft.postedDate)
         : Number.POSITIVE_INFINITY,
+      // A bill's due date is a third anchor besides the transaction's own two
+      // dates — the one a payment recorded ahead of time is likely closest to.
+      tx.billId && tx.billDue ? daysApart(tx.billDue, draft.date) : Number.POSITIVE_INFINITY,
+      tx.billId && tx.billDue && draft.postedDate
+        ? daysApart(tx.billDue, draft.postedDate)
+        : Number.POSITIVE_INFINITY,
     );
-    if (distance > DUPLICATE_WINDOW_DAYS) continue;
+    const window = tx.billId ? BILL_DUPLICATE_WINDOW_DAYS : DUPLICATE_WINDOW_DAYS;
+    if (distance > window) continue;
     if (distance < bestDistance) {
       bestDistance = distance;
       best = tx;
