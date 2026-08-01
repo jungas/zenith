@@ -264,6 +264,69 @@ test('a page whose glyphs all decode to nothing is not called a scan', () => {
   );
 });
 
+/**
+ * The scheme `tests/fixtures/` cannot cover with a real statement: every
+ * glyph in some BPI portal downloads is an inline-image bitmap named only
+ * after its own code (`C40`, `Cd7`, …), with no `/ToUnicode` to say what it
+ * draws. `core/pdf/fonts.ts` recovers a fixed table for that exact scheme —
+ * see the comment on `TYPE3_BITMAP_CODE_TABLE` for how it was derived. This
+ * fixture does not need real bitmap data to prove the table is wired up:
+ * `CharProcs` is never opened for text extraction (only `/Differences`
+ * decides what a code means here), so an empty stream per glyph is enough.
+ */
+function type3BitmapEncodedPdf(text: string, codes: number[]): Uint8Array {
+  const differences = codes.map((code) => `${code} /C${code.toString(16).padStart(2, '0')}`).join(' ');
+  const widths = codes.map(() => 500).join(' ');
+  const first = Math.min(...codes);
+  const last = Math.max(...codes);
+  const content = `BT /F1 12 Tf 10 100 Td (${text}) Tj ET`;
+  const pdf = `%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type3 /FontBBox [0 0 10 10] /FontMatrix [1 0 0 1 0 0] /Encoding << /Differences [${differences}] >> /FirstChar ${first} /LastChar ${last} /Widths [${widths}] >>
+endobj
+5 0 obj
+<< >>
+stream
+${content}
+endstream
+endobj
+trailer
+<< /Root 1 0 R >>
+%%EOF
+`;
+  return latin1Bytes(pdf);
+}
+
+test('the recovered Type3 bitmap-glyph table decodes a matching font', () => {
+  // Codes for "BPI 2026" under the recovered table (see fonts.ts): B, P, I,
+  // space, and the digits 2, 0, 2, 6.
+  const codes = [194, 215, 201, 64, 242, 240, 242, 246];
+  const bytes = String.fromCharCode(...codes);
+  const text = readPdfText(type3BitmapEncodedPdf(bytes, codes));
+  assert.ok(text.lines.some((line) => line.text === 'BPI 2026'), JSON.stringify(text.lines.map((l) => l.text)));
+});
+
+test('a Type3 font with too few Differences entries is not swept into the bitmap table', () => {
+  // Two entries is not enough of a sample to conclude this is the scheme —
+  // it should fall through to ordinary glyph-name resolution (and decode to
+  // nothing, since "C01"/"C02" name nothing real).
+  const codes = [194, 215];
+  const bytes = String.fromCharCode(...codes);
+  assert.throws(
+    () => readPdfText(type3BitmapEncodedPdf(bytes, codes)),
+    /shapes Zenith cannot decode/,
+  );
+});
+
 test('a page with no text-drawing operators at all is still called a scan', () => {
   const pdf = `%PDF-1.4
 1 0 obj
