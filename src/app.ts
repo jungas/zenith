@@ -56,7 +56,7 @@ const ROUTES: RouteDefinition[] = [
   { name: 'transactions', pattern: ['transactions'], view: (params) => transactionsView(params) },
   { name: 'reports', pattern: ['reports'], view: () => reportsView() },
   { name: 'settings', pattern: ['settings'], view: () => settingsView() },
-  { name: 'import', pattern: ['import'], view: () => importView() },
+  { name: 'import', pattern: ['import'], view: ({ account }) => importView({ accountId: account }) },
 ];
 
 let appRoot: HTMLElement | null = null;

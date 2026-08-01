@@ -217,3 +217,73 @@ test('standard-14 font widths are used when a font declares none', () => {
 test('a file that is not a PDF is rejected before anything else', () => {
   assert.throws(() => readPdfText(latin1Bytes('just some text')), /not look like a PDF/);
 });
+
+/**
+ * A minimal PDF whose only font is `Type3` with an `/Encoding` naming its one
+ * glyph something Zenith cannot resolve to a character (no `/ToUnicode`, and
+ * the `/Differences` name matches nothing in `glyphNameToText`).
+ *
+ * Some banks generate statements exactly this way — every glyph drawn as its
+ * own tiny vector program rather than referencing a real font — specifically
+ * because it defeats copy-paste and naive text extraction. The page still
+ * draws a glyph, so this is not the "scanned image" case: a page with genuine
+ * text-drawing operators that all decode to nothing needs to say so, not
+ * blame a scan that never happened.
+ */
+function undecodableType3Pdf(): Uint8Array {
+  const pdf = `%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type3 /FontBBox [0 0 10 10] /FontMatrix [1 0 0 1 0 0] /Encoding << /Differences [65 /Cx1] >> /FirstChar 65 /LastChar 65 /Widths [500] >>
+endobj
+5 0 obj
+<< >>
+stream
+BT /F1 12 Tf 10 100 Td (A) Tj ET
+endstream
+endobj
+trailer
+<< /Root 1 0 R >>
+%%EOF
+`;
+  return latin1Bytes(pdf);
+}
+
+test('a page whose glyphs all decode to nothing is not called a scan', () => {
+  assert.throws(
+    () => readPdfText(undecodableType3Pdf()),
+    /shapes Zenith cannot decode/,
+  );
+});
+
+test('a page with no text-drawing operators at all is still called a scan', () => {
+  const pdf = `%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << >> /Contents 4 0 R >>
+endobj
+4 0 obj
+<< >>
+stream
+0 0 1 1 re f
+endstream
+endobj
+trailer
+<< /Root 1 0 R >>
+%%EOF
+`;
+  assert.throws(() => readPdfText(latin1Bytes(pdf)), /may be a scan/);
+});

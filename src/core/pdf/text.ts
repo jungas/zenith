@@ -82,9 +82,22 @@ function freshState(): TextState {
  * shading and images are parsed as operands and dropped — they cannot affect
  * where a glyph lands.
  */
-export function extractPageItems(doc: PdfDocument, page: PdfPage): TextItem[] {
+export interface PageItems {
+  items: TextItem[];
+  /**
+   * Glyphs the content stream actually drew, decoded or not. Zero here means
+   * the page never asked to paint text at all — the scanned-image case. A
+   * positive count with no items means glyphs were drawn but every one of
+   * them decoded to nothing, which is a font Zenith cannot read rather than
+   * a page with nothing on it, and the two deserve different error messages.
+   */
+  glyphsDrawn: number;
+}
+
+export function extractPageItems(doc: PdfDocument, page: PdfPage): PageItems {
   const content = doc.pageContent(page);
   const items: TextItem[] = [];
+  let glyphsDrawn = 0;
   const fontCache = new Map<string, PdfFont>();
   const fonts = doc.dict(page.resources?.get('Font'));
   const xObjects = doc.dict(page.resources?.get('XObject'));
@@ -118,6 +131,7 @@ export function extractPageItems(doc: PdfDocument, page: PdfPage): TextItem[] {
       const font = state.font;
       if (!font) return;
       const glyphs = font.decode(bytes_);
+      glyphsDrawn += glyphs.length;
       const trm = multiply(
         [state.size * state.scale, 0, 0, state.size, 0, state.rise],
         multiply(textMatrix, ctm),
@@ -282,7 +296,7 @@ export function extractPageItems(doc: PdfDocument, page: PdfPage): TextItem[] {
   };
 
   run(content, IDENTITY, 0);
-  return items;
+  return { items, glyphsDrawn };
 }
 
 /**

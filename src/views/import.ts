@@ -25,7 +25,7 @@ import { findMatchingPlan, planFromStatementRow } from '../core/installments.ts'
 import type { DateOrder, ParsedStatement } from '../core/statement.ts';
 import type { TextLine } from '../core/pdf/read.ts';
 import {
-  applyImport, buildDrafts, importTotals, matchOwnAccount, reconcileWithStatement, suggestAccountId,
+  applyImport, buildDrafts, importTotals, matchOwnAccount, reconcileWithStatement,
 } from '../core/statement-import.ts';
 import type { ImportDraft } from '../core/statement-import.ts';
 import * as actions from '../core/actions.ts';
@@ -55,7 +55,36 @@ interface Session {
  */
 let session: Session | null = null;
 
-export function importView(): HTMLElement {
+/**
+ * Which account a statement not yet chosen will import into.
+ *
+ * Held outside the view for the same reason `session` is: a re-render must
+ * not forget it. It is set before there is anything to review, which is the
+ * point — a card is a decision someone can make without the statement in
+ * hand, and asking for the PDF only once that decision is made means a
+ * password prompt and a parse never happen for the wrong account.
+ */
+let pendingAccountId: string | null = null;
+
+/**
+ * The `?account=` this view last saw, so a re-render triggered by a `commit`
+ * elsewhere in the app — which calls back in with the same URL and therefore
+ * the same param — can be told apart from an actual navigation to a new one.
+ * Only the latter should override a choice made by hand: a card's "Import
+ * statement" link is a fresh instruction ("this one"), but a stray re-render
+ * mid-review is not, and must not silently swap the account back.
+ */
+let lastRouteAccountId: string | undefined;
+
+export function importView({ accountId }: { accountId?: string } = {}): HTMLElement {
+  const state = getState();
+  if (accountId !== lastRouteAccountId) {
+    lastRouteAccountId = accountId;
+    if (accountId && state.accounts.some((a) => a.id === accountId && !a.archived)) {
+      pendingAccountId = accountId;
+    }
+  }
+
   const root = h('div.view.view-import');
   const stage = h('div.import-stage');
 
@@ -155,12 +184,9 @@ export function importView(): HTMLElement {
       return;
     }
 
-    const accountId =
-      suggestAccountId(state, {
-        accountHint: parsed.summary.accountHint,
-        issuer: parsed.summary.issuer,
-        kind: parsed.kind,
-      }) ?? '';
+    // Chosen before the file was even picked — see `pendingAccountId`. The
+    // picker will not hand a file to `handleFile` without one set.
+    const accountId = pendingAccountId ?? '';
 
     const memo = statementMemo(parsed);
     session = {
@@ -211,10 +237,32 @@ export function importView(): HTMLElement {
       return;
     }
 
+    // A deleted or archived account cannot stay chosen.
+    if (pendingAccountId && !state.accounts.some((a) => a.id === pendingAccountId && !a.archived)) {
+      pendingAccountId = null;
+    }
+    const ready = pendingAccountId !== null;
+
+    const accountSelect = select(
+      [
+        { value: '', label: 'Choose an account…' },
+        ...state.accounts
+          .filter((a) => !a.archived)
+          .map((a) => ({ value: a.id, label: a.name, selected: a.id === pendingAccountId })),
+      ],
+      {
+        onchange: (event: Event) => {
+          pendingAccountId = (event.target as HTMLSelectElement).value || null;
+          renderPicker(message);
+        },
+      },
+    );
+
     const dropZone = h(
-      'div.import-drop',
+      `div.import-drop${ready ? '' : ' is-disabled'}`,
       {
         ondragover: (event: DragEvent) => {
+          if (!ready) return;
           event.preventDefault();
           dropZone.classList.add('is-over');
         },
@@ -222,16 +270,19 @@ export function importView(): HTMLElement {
         ondrop: (event: DragEvent) => {
           event.preventDefault();
           dropZone.classList.remove('is-over');
+          if (!ready) return;
           const file = event.dataTransfer?.files?.[0];
           if (file) void handleFile(file);
         },
       },
       h('div.import-drop-icon', null, icon('upload', { size: 26 })),
-      h('p.import-drop-title', { text: 'Drop a statement here' }),
-      h('p.import-drop-hint', { text: 'or choose the PDF your bank emailed you' }),
+      h('p.import-drop-title', { text: ready ? 'Drop a statement here' : 'Choose an account above first' }),
+      h('p.import-drop-hint', {
+        text: ready ? 'or choose the PDF your bank emailed you' : 'Zenith needs to know which account these transactions belong to before it can read the file.',
+      }),
       h(
         'button.btn.btn-primary',
-        { type: 'button', onclick: () => fileInput.click() },
+        { type: 'button', disabled: !ready, onclick: () => fileInput.click() },
         icon('upload', { size: 16 }),
         h('span', { text: 'Choose PDF' }),
       ),
@@ -243,6 +294,11 @@ export function importView(): HTMLElement {
       message
         ? h('div.import-alert', null, icon('alert', { size: 16 }), h('p', { text: message }))
         : null,
+      h(
+        'section.card.block',
+        null,
+        field('Import into', accountSelect, { id: 'import-account-pick', hint: 'Pick the card or account this statement belongs to.' }),
+      ),
       h('section.card.block', null, dropZone),
       h(
         'section.card.block',
@@ -311,6 +367,9 @@ export function importView(): HTMLElement {
         onchange: (event: Event) => {
           if (!session) return;
           session.accountId = (event.target as HTMLSelectElement).value;
+          // A correction made here is worth remembering if "Start over" is
+          // pressed next — it should not undo a fix just made.
+          pendingAccountId = session.accountId || null;
           // Roles, duplicate flags and category guesses all depend on which
           // account this is, so the drafts are rebuilt rather than patched.
           session.drafts = buildDrafts(getState(), session.parsed.rows, {
