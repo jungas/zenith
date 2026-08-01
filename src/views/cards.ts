@@ -243,12 +243,20 @@ export function cardsView({ month = currentMonth() }: { month?: MonthKey } = {})
     root,
     sectionHeader('Credit cards', {
       subtitle: 'Balances, funding and what each card is costing you',
-      actions: h(
-        'button.btn.btn-primary',
-        { type: 'button', onclick: () => openAccountForm({ presetType: 'credit' }) },
-        icon('plus', { size: 16 }),
-        h('span', { text: 'Add card' }),
-      ),
+      actions: [
+        h(
+          'a.btn',
+          { href: '#/import', title: 'Import a PDF statement' },
+          icon('upload', { size: 16 }),
+          h('span', { text: 'Import statement' }),
+        ),
+        h(
+          'button.btn.btn-primary',
+          { type: 'button', onclick: () => openAccountForm({ presetType: 'credit' }) },
+          icon('plus', { size: 16 }),
+          h('span', { text: 'Add card' }),
+        ),
+      ],
     }),
     h(
       'div.tile-grid',
