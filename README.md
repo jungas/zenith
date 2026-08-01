@@ -113,14 +113,14 @@ debt case that a naïve version of the identity gets wrong.)
 |---|---|
 | **Home** | Ready-to-assign hero, cash vs card debt, per-card coverage, payments due, envelopes closest to the limit, spending mix, recent activity |
 | **Budget** | Month-by-month envelope table with inline assigning, rollover, overspend flags, move-money, 3-month-average suggestions — and card payment envelopes in their own group with a **Reserved** column |
-| **Cards** | Per card: balance, utilisation band, available credit, statement balance, minimum payment, statement/due dates, funding coverage, interest cost — with limits shared across cards from one bank |
+| **Cards** | Per card: balance, utilisation band, available credit, statement balance, minimum payment, statement/due dates, funding coverage, interest cost — with limits shared across cards from one bank; imports a PDF statement straight from the header |
 | **Card detail** | Statement-cycle timeline, a plain-language walkthrough of the budget connection, and a payoff planner (amortisation, total interest, months saved vs paying the minimum) |
 | **Bills** | Every recurring commitment: what is still to leave this month, what each one works out to per month, which envelopes are short of the dates coming, and a one-click assign to close the gap |
 | **Ledger** | One searchable list across every account, filterable by account, category and month |
 | **Reports** | Income vs spending, spending by category, card debt over time, savings rate — 3/6/12-month ranges |
 | **Accounts** | Net worth, cash, debt, per-account balances — chequing, savings, cash, digital wallets, cards and loans |
 | **Import** | Read a PDF statement — including a password-protected one — and turn it into transactions, with every row reviewable before anything is saved |
-| **Settings** | Currency (26, including PHP) and locale, theme, utilisation warning threshold, payment reminders, install, JSON backup import/export, CSV export, statement import, sample data, integrity check |
+| **Settings** | Currency (26, including PHP) and locale, theme, utilisation warning threshold, payment reminders, install, JSON backup import/export, CSV export, sample data, integrity check |
 
 Also: one-level-deep **undo** on every mutation (`u`), `n` to add a transaction,
 full keyboard navigation, and a focus-trapped dialog.
