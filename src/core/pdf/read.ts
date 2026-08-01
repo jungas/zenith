@@ -37,15 +37,18 @@ export function readPdfText(bytes: Uint8Array, password = ''): PdfText {
   const doc = new PdfDocument(bytes, password);
   const pages = doc.pages();
   const lines: TextLine[] = [];
+  let glyphsDrawn = 0;
 
   for (const [index, page] of pages.entries()) {
-    let items;
+    let page_;
     try {
-      items = extractPageItems(doc, page);
+      page_ = extractPageItems(doc, page);
     } catch {
       // One unreadable page should not cost the other eleven.
       continue;
     }
+    const { items } = page_;
+    glyphsDrawn += page_.glyphsDrawn;
     // Shift to the page's own origin, so a media box that does not start at
     // zero cannot skew the column positions the statement parser reads.
     const [originX, originY] = page.mediaBox;
@@ -59,9 +62,11 @@ export function readPdfText(bytes: Uint8Array, password = ''): PdfText {
 
   if (!lines.length) {
     throw new PdfReadError(
-      pages.length
-        ? 'No text could be read from this PDF. It may be a scan — an image of a statement rather than a text one.'
-        : 'No pages could be read from this PDF.',
+      !pages.length
+        ? 'No pages could be read from this PDF.'
+        : glyphsDrawn
+          ? 'This PDF draws its text as shapes Zenith cannot decode into characters — some banks generate statements this way to block copying. Try re-saving or re-exporting the statement, or enter these transactions by hand.'
+          : 'No text could be read from this PDF. It may be a scan — an image of a statement rather than a text one.',
     );
   }
 
