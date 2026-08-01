@@ -410,8 +410,15 @@ reminder, and every receipt, on each deploy.
 A budget you have to type in twice is a budget you stop keeping, so Zenith reads
 the PDF your bank emails you and proposes the transactions in it.
 
+**Which account it belongs to is asked before the file is.** A card is a
+decision someone can make without the statement in hand, and asking for the
+PDF only once it is made means a password prompt and a parse never happen for
+the wrong account. Opening **Import statement** from a specific card arrives
+with that account already chosen; opening it anywhere else drops you straight
+into the picker, and the file chooser stays disabled until an account is.
+
 Statements from Philippine banks arrive **password protected**, so that is the
-first thing the flow handles rather than the last. Choosing a file that turns out
+next thing the flow handles rather than the last. Choosing a file that turns out
 to be encrypted stops everything and asks:
 
 > **Password required** — "bdo-card-aes256.pdf" is password protected. Zenith
@@ -472,8 +479,9 @@ The parser carries **no per-bank layout rules**, and that is deliberate. A
 statement's own columns and dates describe it better than a guess about what a
 bank's template looked like when this was written — and a template that changed
 would then quietly produce *wrong* figures rather than none. What is per-bank is
-only recognition of the name, which preselects the account, and the password
-hint the prompt offers.
+only recognition of the name, shown against the account you picked once the
+statement is read — *"The statement ends in 4821"* — so a mismatch is caught
+before anything is saved rather than guessed away.
 
 Other banks are not excluded; they are simply not proven. The parse is generic,
 so a statement from anywhere may well work — the review table is where you find

@@ -567,6 +567,12 @@ export function cardDetailView(
       h('a.btn.btn-ghost.btn-sm', { href: '#/cards' }, icon('arrowLeft', { size: 16 }), h('span', { text: 'Cards' })),
       h('div.foot-spacer'),
       h(
+        'a.btn.btn-sm',
+        { href: `#/import?account=${encodeURIComponent(card.id)}`, title: 'Import a PDF statement for this card' },
+        icon('upload', { size: 15 }),
+        h('span', { text: 'Import statement' }),
+      ),
+      h(
         'button.btn.btn-sm',
         { type: 'button', onclick: () => openAccountForm({ account: card }) },
         icon('edit', { size: 15 }),
