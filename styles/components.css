@@ -657,6 +657,11 @@ select.input {
   margin-top: 2px;
 }
 
+.inline-note .link-btn {
+  flex: none;
+  margin-left: auto;
+}
+
 .preset-row {
   display: flex;
   flex-wrap: wrap;
@@ -780,6 +785,52 @@ select.input {
 .pay-row strong {
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;
+}
+
+.link-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  max-height: 18rem;
+  overflow-y: auto;
+  margin-top: var(--sp-3);
+}
+
+.link-picker-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.link-picker-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.link-picker-payee {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.link-picker-meta {
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+}
+
+.link-picker-amount {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.link-picker-empty {
+  padding: var(--sp-3);
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  text-align: center;
 }
 
 /* ── Toasts ─────────────────────────────────────────────────────────── */

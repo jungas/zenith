@@ -227,6 +227,13 @@
   font-variant-numeric: tabular-nums;
 }
 
+.due-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex: none;
+}
+
 .progress-list {
   display: flex;
   flex-direction: column;

@@ -17,7 +17,7 @@ import type {
   Account, AccountType, Bill, BillCadence, Category, Cents, CreditAccount, Installment, ISODate,
   MonthKey, SavingsCreditFrequency, SeriesColor, Transaction, TxKind,
 } from '../core/model.ts';
-import { billById, billSnapshot } from '../core/bills.ts';
+import { billById, billSnapshot, linkableTransactions } from '../core/bills.ts';
 import { categoryRow, monthSummary } from '../core/budget.ts';
 import { cardSnapshot, type CardSnapshot } from '../core/cards.ts';
 import { loanSnapshot, type LoanSnapshot } from '../core/loans.ts';
@@ -119,6 +119,8 @@ export function openTransactionForm({
     transferId && legs?.outflow && legs.inflow
       ? { id: transferId, outflow: legs.outflow, inflow: legs.inflow, extras: legs.extras }
       : null;
+
+  const linkedBill = transaction?.billId ? billById(state, transaction.billId) : null;
 
   const body = h('form.form', { onsubmit: (event: Event) => event.preventDefault() });
   const errorSlot = h('div.form-error-slot');
@@ -324,6 +326,29 @@ export function openTransactionForm({
       field(isTransfer ? 'Description' : 'Payee', payeeInput, { id: 'tx-payee' }),
       field('Memo', memoInput, { id: 'tx-memo' }),
       h('label.check-row', null, clearedInput, h('span', { text: 'Cleared — this has settled at the bank' })),
+      linkedBill
+        ? h(
+            'div.inline-note',
+            null,
+            icon('link', { size: 16 }),
+            h('p', {
+              text:
+                `Linked to ${linkedBill.name}` +
+                (transaction?.billDue ? ` · due ${formatDate(transaction.billDue, money().locale)}` : '') +
+                '.',
+            }),
+            h('button.link-btn', {
+              type: 'button',
+              text: 'Unlink',
+              title: 'Detach this transaction from the bill, without touching the money',
+              onclick: () => {
+                commit((s) => actions.unlinkBillPayment(s, transaction!.id), { label: 'unlink bill payment' });
+                closeModal();
+                undoToast(`Unlinked from ${linkedBill.name}.`);
+              },
+            }),
+          )
+        : null,
       hintSlot,
       errorSlot,
     );
@@ -1853,6 +1878,96 @@ export function openPayBillForm(billId: string, dueDate: string): void {
       h('div.foot-spacer'),
       h('button.btn', { type: 'button', text: 'Cancel', onclick: closeModal }),
       submit,
+    ],
+  });
+}
+
+/**
+ * Point an existing transaction at a bill occurrence instead of recording a
+ * new payment.
+ *
+ * For a payment already sitting in the ledger — typed in by hand before this
+ * bill was tracked, or read off a statement that arrived before anyone told
+ * Zenith about it — "Pay" would double it. This finds the row that already is
+ * the payment.
+ */
+export function openLinkTransactionForm(billId: string, dueDate: string): void {
+  const state = getState();
+  const bill = billById(state, billId);
+  if (!bill) return;
+
+  const searchInput = input({ placeholder: 'Search by payee…', autocomplete: 'off' });
+  const listSlot = h('ul.link-picker-list', { role: 'list' });
+
+  const renderList = (): void => {
+    const query = searchInput.value.trim().toLowerCase();
+    const current = getState();
+    const candidates = linkableTransactions(current, bill, dueDate)
+      .filter((tx) => !query || tx.payee.toLowerCase().includes(query))
+      .slice(0, 30);
+
+    if (!candidates.length) {
+      mount(
+        listSlot,
+        h('li.link-picker-empty', {
+          text: query
+            ? 'No unlinked transactions match that search.'
+            : 'No unlinked transactions to point this at yet.',
+        }),
+      );
+      return;
+    }
+
+    mount(
+      listSlot,
+      candidates.map((tx) => {
+        const account = current.accounts.find((a) => a.id === tx.accountId);
+        return h(
+          'li.link-picker-row',
+          null,
+          h(
+            'div.link-picker-main',
+            null,
+            h('p.link-picker-payee', { text: tx.payee || 'Untitled' }),
+            h('p.link-picker-meta', {
+              text: `${formatDate(tx.date, money().locale)}${account ? ` · ${account.name}` : ''}`,
+            }),
+          ),
+          h('p.link-picker-amount', { text: formatMoney(Math.abs(tx.amount), money()) }),
+          h('button.btn.btn-sm', {
+            type: 'button',
+            text: 'Link',
+            onclick: () => {
+              commit(
+                (s) => actions.linkBillPayment(s, { billId: bill.id, dueDate, transactionId: tx.id }),
+                { label: 'link bill payment' },
+              );
+              closeModal();
+              undoToast(`${bill.name} linked to ${tx.payee || 'that transaction'}.`);
+            },
+          }),
+        );
+      }),
+    );
+  };
+
+  searchInput.oninput = renderList;
+  renderList();
+
+  openModal({
+    title: `Link a transaction to ${bill.name}`,
+    body: h(
+      'div.form',
+      null,
+      h('p.modal-text', {
+        text: `Due ${formatDate(dueDate, money().locale)}. Pick the transaction that already paid it, instead of recording a new one.`,
+      }),
+      field('Search', searchInput, { id: 'link-search' }),
+      listSlot,
+    ),
+    footer: [
+      h('div.foot-spacer'),
+      h('button.btn', { type: 'button', text: 'Cancel', onclick: closeModal }),
     ],
   });
 }

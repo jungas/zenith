@@ -433,6 +433,41 @@ export function payBill(state: AppState, input: BillPaymentInput): AppState {
   });
 }
 
+export interface LinkBillPaymentInput {
+  billId: string;
+  dueDate: ISODate;
+  transactionId: string;
+}
+
+/**
+ * Point an existing transaction at a bill occurrence, instead of recording a
+ * second payment beside it.
+ *
+ * The money already moved — the transaction was typed in by hand before the
+ * bill was tracked, or read off a statement that arrived before anyone told
+ * Zenith about the bill. This writes the same receipt `payBill` would write
+ * onto a new transaction, but onto the row that is actually it.
+ */
+export function linkBillPayment(state: AppState, input: LinkBillPaymentInput): AppState {
+  const bill = billById(state, input.billId);
+  if (!bill || !input.dueDate) return state;
+  const transaction = state.transactions.find((t) => t.id === input.transactionId);
+  if (!transaction) return state;
+
+  // Paying an occurrence that was marked skipped settles the argument: it was
+  // not skipped after all — the same rule `payBill` follows.
+  const next = isSkipped(bill, input.dueDate)
+    ? unskipBillOccurrence(state, bill.id, input.dueDate)
+    : state;
+
+  return updateTransaction(next, transaction.id, { billId: bill.id, billDue: input.dueDate });
+}
+
+/** Detach a transaction from the bill occurrence it settles. The money stays exactly where it is. */
+export function unlinkBillPayment(state: AppState, transactionId: string): AppState {
+  return updateTransaction(state, transactionId, { billId: null, billDue: null });
+}
+
 /** Mark one occurrence as deliberately not paid. */
 export function skipBillOccurrence(state: AppState, billId: string, dueDate: ISODate): AppState {
   const bill = billById(state, billId);
