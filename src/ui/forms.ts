@@ -38,6 +38,10 @@ export interface TransactionFormOptions {
     accountId?: string;
     fromAccountId?: string;
     toAccountId?: string;
+    categoryId?: string | null;
+    payee?: string;
+    memo?: string;
+    cleared?: boolean;
   };
 }
 
@@ -48,7 +52,17 @@ export interface AccountFormOptions {
 
 export interface CategoryFormOptions {
   category?: Category | null;
+  /**
+   * Fires once, however the dialog closes — created, cancelled, or dismissed —
+   * with the new category's id or null. Lets a caller that navigated away to
+   * create a category (e.g. from the transaction form's "+ New category")
+   * resume afterwards without a separate cancel path to wire up.
+   */
+  onDone?: (createdCategoryId: string | null) => void;
 }
+
+/** Sentinel option value for "+ New category…" in a category `<select>`. */
+const NEW_CATEGORY_OPTION = '__new-category__';
 
 const money = () => moneyOpts();
 
@@ -129,7 +143,7 @@ export function openTransactionForm({
   // moment they change the account or switch to a transfer.
   const dateInput = h<HTMLInputElement>('input.input', {
     type: 'date',
-    value: transaction?.date ?? defaults.date ?? todayISO(),
+    value: defaults.date ?? transaction?.date ?? todayISO(),
     required: true,
   });
   // Optional, and deliberately not defaulted to today: a posting date is
@@ -138,28 +152,30 @@ export function openTransactionForm({
   // this row will recognise it instead of proposing it a second time.
   const postedInput = h<HTMLInputElement>('input.input', {
     type: 'date',
-    value: transaction?.postedDate ?? defaults.postedDate ?? '',
+    value: defaults.postedDate ?? transaction?.postedDate ?? '',
   });
   const amountInput = moneyInput({
-    value: transaction
-      // A transfer's amount is the movement, not the sign the clicked leg gives it.
-      ? centsToInput(editingTransfer ? Math.abs(transaction.amount) : transaction.amount)
-      : defaults.amount ? centsToInput(defaults.amount) : '',
+    value: defaults.amount
+      ? centsToInput(defaults.amount)
+      : transaction
+        // A transfer's amount is the movement, not the sign the clicked leg gives it.
+        ? centsToInput(editingTransfer ? Math.abs(transaction.amount) : transaction.amount)
+        : '',
     required: true,
   });
   const payeeInput = input({
-    value: transaction?.payee ?? '',
+    value: defaults.payee ?? transaction?.payee ?? '',
     placeholder: 'Where did it go?',
     autocomplete: 'off',
     list: 'payee-suggestions',
   });
-  const memoInput = input({ value: transaction?.memo ?? '', placeholder: 'Optional note' });
+  const memoInput = input({ value: defaults.memo ?? transaction?.memo ?? '', placeholder: 'Optional note' });
   const clearedInput = h<HTMLInputElement>('input', {
-    type: 'checkbox', class: 'checkbox', checked: transaction?.cleared ?? false,
+    type: 'checkbox', class: 'checkbox', checked: defaults.cleared ?? transaction?.cleared ?? false,
   });
 
   const accountSelect = select(
-    accountOptions(state, { selected: transaction?.accountId ?? defaults.accountId }),
+    accountOptions(state, { selected: defaults.accountId ?? transaction?.accountId ?? undefined }),
   );
   const fromSelect = select(
     accountOptions(state, {
@@ -176,9 +192,37 @@ export function openTransactionForm({
         ?? state.accounts[1]?.id,
     }),
   );
+  const initialCategoryId = defaults.categoryId ?? transaction?.categoryId ?? null;
   const categorySelect = select(
-    [{ value: '', label: 'Uncategorised' }, ...categoryOptions(state, { selected: transaction?.categoryId })],
+    [
+      { value: '', label: 'Uncategorised' },
+      ...categoryOptions(state, { selected: initialCategoryId }),
+      { value: NEW_CATEGORY_OPTION, label: '+ New category…' },
+    ],
   );
+  categorySelect.addEventListener('change', () => {
+    if (categorySelect.value !== NEW_CATEGORY_OPTION) return;
+    // Captured now, because the whole dialog is torn down the moment
+    // `openCategoryForm` takes over — there is only one modal host.
+    const resume: NonNullable<TransactionFormOptions['defaults']> = {
+      kind: mode,
+      date: dateInput.value || undefined,
+      postedDate: postedInput.value || undefined,
+      amount: Math.abs(parseMoney(amountInput.value)) || undefined,
+      accountId: accountSelect.value || undefined,
+      payee: payeeInput.value,
+      memo: memoInput.value,
+      cleared: clearedInput.checked,
+    };
+    openCategoryForm({
+      onDone: (createdCategoryId) => {
+        openTransactionForm({
+          transaction,
+          defaults: { ...resume, categoryId: createdCategoryId ?? initialCategoryId },
+        });
+      },
+    });
+  });
   const feeInput = moneyInput({ placeholder: '0.00' });
   const feeCategorySelect = select(categoryOptions(state));
   const payeeList = h(
@@ -1182,7 +1226,7 @@ function clampDay(value: string, fallback: number): number {
 
 /* ── Category ─────────────────────────────────────────────────────────── */
 
-export function openCategoryForm({ category = null }: CategoryFormOptions = {}): void {
+export function openCategoryForm({ category = null, onDone }: CategoryFormOptions = {}): void {
   const state = getState();
   /** Const alias so the null check narrows inside the deferred handlers below. */
   const existing = category;
@@ -1235,6 +1279,7 @@ export function openCategoryForm({ category = null }: CategoryFormOptions = {}):
     errorSlot,
   );
 
+  let createdCategoryId: string | null = null;
   const submit = h('button.btn.btn-primary', {
     type: 'button',
     text: editing ? 'Save changes' : 'Add category',
@@ -1245,8 +1290,12 @@ export function openCategoryForm({ category = null }: CategoryFormOptions = {}):
         return;
       }
       const patch = { name, group: groupInput.value.trim() || 'Everyday', color };
-      if (category) commit((s) => actions.updateCategory(s, category.id, patch), { label: 'edit category' });
-      else commit((s) => actions.addCategory(s, patch), { label: 'add category' });
+      if (category) {
+        commit((s) => actions.updateCategory(s, category.id, patch), { label: 'edit category' });
+      } else {
+        const next = commit((s) => actions.addCategory(s, patch), { label: 'add category' });
+        createdCategoryId = next.categories.at(-1)?.id ?? null;
+      }
       closeModal();
       undoToast(category ? 'Category updated.' : 'Category added.');
     },
@@ -1276,7 +1325,13 @@ export function openCategoryForm({ category = null }: CategoryFormOptions = {}):
     submit,
   ];
 
-  openModal({ title: category ? `Edit ${category.name}` : 'New category', body, footer, size: 'sm' });
+  openModal({
+    title: category ? `Edit ${category.name}` : 'New category',
+    body,
+    footer,
+    size: 'sm',
+    onClose: onDone ? () => onDone(createdCategoryId) : undefined,
+  });
 }
 
 /* ── Move money between envelopes ─────────────────────────────────────── */
