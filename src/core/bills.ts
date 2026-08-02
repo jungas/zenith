@@ -257,6 +257,32 @@ export function billPaymentFor(
 }
 
 /**
+ * Existing transactions that could settle one occurrence instead of a new
+ * payment being recorded for it.
+ *
+ * Already-linked transactions are excluded — pointing this occurrence at one
+ * would silently steal it from whatever it currently settles, rather than
+ * leaving that decision to an explicit unlink first. Sorted by how close each
+ * one falls to the due date, since that is the strongest signal available
+ * that a transaction typed in by hand — or read off a statement before the
+ * bill was ever tracked — is this occurrence and not some other month's.
+ */
+export function linkableTransactions(state: AppState, bill: Bill, dueDate: ISODate): Transaction[] {
+  // The bill's usual account, when it has one, is where the payment most
+  // likely landed — worth trying before the date is what breaks the tie.
+  const onUsualAccount = (tx: Transaction): number =>
+    bill.accountId && tx.accountId === bill.accountId ? 0 : 1;
+
+  return state.transactions
+    .filter((tx) => !tx.system && !tx.billId && tx.kind === 'expense' && tx.amount < 0)
+    .sort(
+      (a, b) =>
+        onUsualAccount(a) - onUsualAccount(b) ||
+        Math.abs(daysBetween(dueDate, a.date)) - Math.abs(daysBetween(dueDate, b.date)),
+    );
+}
+
+/**
  * What one occurrence is expected to cost.
  *
  * A fixed bill costs what it says. A **variable** one — a metered utility —

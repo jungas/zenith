@@ -21,8 +21,8 @@ import { emptyState, makeBill } from '../src/core/model.ts';
 import type { AppState, Bill } from '../src/core/model.ts';
 import * as actions from '../src/core/actions.ts';
 import {
-  billFunding, billSnapshot, billTotals, forecastAmount, occurrencesBetween, occurrencesInMonth,
-  suggestedBills, upcomingBills,
+  billFunding, billSnapshot, billTotals, forecastAmount, linkableTransactions, occurrencesBetween,
+  occurrencesInMonth, suggestedBills, upcomingBills,
 } from '../src/core/bills.ts';
 import { accountBalance, cashOnHand, categoryRow, monthSummary, readyToAssign } from '../src/core/budget.ts';
 import { dueReminders, plannedReminders } from '../src/core/reminders.ts';
@@ -203,6 +203,105 @@ test('a bill paid on a card reserves the cash in that card’s payment envelope'
   const row = categoryRow(monthSummary(paid, MAY), envelope.id);
   assert.equal(row.reserved, 165_000, 'card spending funds the payment envelope, bills included');
   assert.equal(accountBalance(paid, visa.id), -165_000);
+});
+
+/* ── Pointing an existing transaction at an occurrence ───────────────────── */
+
+test('an existing transaction can settle an occurrence instead of a new payment', () => {
+  const { state, checking, housing } = fixture();
+  const bill = rent(state);
+  // Typed in by hand before the bill was ever tracked — no billId, no receipt.
+  let next = actions.addTransaction(state, {
+    date: `${MAY}-01`, accountId: checking.id, categoryId: housing.id,
+    payee: 'Harbourview Lettings', amount: -165_000, kind: 'expense',
+  });
+  const tx = must(next.transactions[0], 'the hand-typed transaction');
+
+  next = actions.linkBillPayment(next, { billId: bill.id, dueDate: `${MAY}-01`, transactionId: tx.id });
+
+  assert.equal(next.transactions.length, 1, 'nothing new was written');
+  assert.equal(must(next.transactions[0], 'the transaction').billId, bill.id);
+  assert.equal(must(next.transactions[0], 'the transaction').billDue, `${MAY}-01`);
+
+  const occurrence = must(
+    billSnapshot(next, rent(next), { asOf: `${MAY}-03`, month: MAY }).thisMonth[0],
+    'the May occurrence',
+  );
+  assert.equal(occurrence.status, 'paid');
+  assert.equal(occurrence.paid?.id, tx.id);
+});
+
+test('linking settles the argument about a skipped occurrence, the same as paying it', () => {
+  const { state, checking } = fixture();
+  const bill = rent(state);
+  let next = actions.skipBillOccurrence(state, bill.id, `${MAY}-01`);
+  next = actions.addTransaction(next, {
+    date: `${MAY}-01`, accountId: checking.id, payee: 'Harbourview Lettings', amount: -165_000, kind: 'expense',
+  });
+  const tx = must(next.transactions[0], 'the transaction');
+
+  next = actions.linkBillPayment(next, { billId: bill.id, dueDate: `${MAY}-01`, transactionId: tx.id });
+
+  assert.deepEqual(rent(next).skipped, []);
+  assert.equal(must(billSnapshot(next, rent(next), { asOf: `${MAY}-03`, month: MAY }).thisMonth[0], 'May').status, 'paid');
+});
+
+test('unlinking un-pays the occurrence without touching the money', () => {
+  const { state, checking } = fixture();
+  const bill = rent(state);
+  const paid = actions.payBill(state, { billId: bill.id, dueDate: `${MAY}-01`, accountId: checking.id });
+  const tx = must(paid.transactions[0], 'the payment');
+
+  const unlinked = actions.unlinkBillPayment(paid, tx.id);
+
+  assert.equal(unlinked.transactions.length, paid.transactions.length, 'the transaction still exists');
+  const same = must(unlinked.transactions.find((t) => t.id === tx.id), 'the same transaction');
+  assert.equal(same.billId, null);
+  assert.equal(same.billDue, null);
+  assert.equal(same.amount, tx.amount, 'the money moved is untouched');
+  assert.equal(
+    billSnapshot(unlinked, rent(unlinked), { asOf: `${MAY}-03`, month: MAY }).thisMonth[0]?.status,
+    'overdue',
+    'the occurrence reads unpaid again',
+  );
+});
+
+test('a transaction already linked elsewhere is not offered a second time', () => {
+  const { state, checking, housing } = fixture();
+  const bill = rent(state);
+  let next = actions.addTransaction(state, {
+    date: `${MAY}-01`, accountId: checking.id, categoryId: housing.id,
+    payee: 'Harbourview Lettings', amount: -165_000, kind: 'expense',
+  });
+  const unlinked = must(next.transactions[0], 'the candidate');
+  assert.ok(
+    linkableTransactions(next, bill, `${MAY}-01`).some((tx) => tx.id === unlinked.id),
+    'an unlinked transaction is offered',
+  );
+
+  next = actions.linkBillPayment(next, { billId: bill.id, dueDate: `${MAY}-01`, transactionId: unlinked.id });
+  assert.ok(
+    !linkableTransactions(next, bill, `${MAY}-01`).some((tx) => tx.id === unlinked.id),
+    'a linked transaction is not offered again',
+  );
+});
+
+test('candidates on the bill’s usual account are offered before ones on another', () => {
+  const { state, checking, visa, housing } = fixture();
+  const bill = rent(state); // accountId is Checking
+  let next = actions.addTransaction(state, {
+    date: `${MAY}-01`, accountId: visa.id, categoryId: housing.id,
+    payee: 'Harbourview Lettings', amount: -165_000, kind: 'expense',
+  });
+  next = actions.addTransaction(next, {
+    date: `${MAY}-10`, accountId: checking.id, categoryId: housing.id,
+    payee: 'Harbourview Lettings', amount: -165_000, kind: 'expense',
+  });
+
+  const candidates = linkableTransactions(next, bill, `${MAY}-01`);
+  // The Visa transaction sits closer to the due date, but Checking is the
+  // account this bill is normally paid from.
+  assert.equal(candidates[0]?.accountId, checking.id);
 });
 
 /* ── Skipping ─────────────────────────────────────────────────────────── */

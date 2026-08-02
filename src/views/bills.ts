@@ -10,7 +10,7 @@
 import { h, append } from '../ui/dom.ts';
 import { icon } from '../ui/icons.ts';
 import { statTile, statusPill, sectionHeader, emptyState } from '../ui/components.ts';
-import { openBillForm, openPayBillForm } from '../ui/forms.ts';
+import { openBillForm, openLinkTransactionForm, openPayBillForm } from '../ui/forms.ts';
 import { formatMoney } from '../core/money.ts';
 import { addMonths, currentMonth, formatDateShort, monthLabel, relativeDays } from '../core/dates.ts';
 import { navigate } from '../router.ts';
@@ -284,13 +284,24 @@ function dueRow(snapshot: BillSnapshot, next: BillOccurrence, money: Money): HTM
       null,
       statusPill(status.tone, bill.autopay ? 'Automatic' : status.label, { size: 'sm' }),
     ),
-    // An automatic payment still needs recording once it has actually gone out,
-    // so the button stays — it just does not claim to be doing the paying.
-    h('button.btn.btn-sm.btn-primary', {
-      type: 'button',
-      text: bill.autopay ? 'Record' : 'Pay',
-      onclick: () => openPayBillForm(bill.id, next.dueDate),
-    }),
+    h(
+      'div.due-actions',
+      null,
+      // An automatic payment still needs recording once it has actually gone
+      // out, so the button stays — it just does not claim to be doing the
+      // paying.
+      h('button.btn.btn-sm.btn-primary', {
+        type: 'button',
+        text: bill.autopay ? 'Record' : 'Pay',
+        onclick: () => openPayBillForm(bill.id, next.dueDate),
+      }),
+      h('button.btn.btn-sm.btn-ghost', {
+        type: 'button',
+        text: 'Link…',
+        title: 'Point an existing transaction at this bill instead of recording a new one',
+        onclick: () => openLinkTransactionForm(bill.id, next.dueDate),
+      }),
+    ),
   );
 }
 
@@ -364,11 +375,20 @@ function occurrenceChip(bill: Bill, entry: BillOccurrence, money: Money): HTMLEl
   const label = `${formatDateShort(entry.dueDate, money.locale)} · ${formatMoney(entry.amount, money)}`;
 
   if (entry.paid) {
+    const paidTransactionId = entry.paid.id;
     return h(
       'li.bill-occurrence.is-paid',
       null,
       icon('check', { size: 14 }),
       h('span', { text: `${label} · paid` }),
+      h('button.link-btn', {
+        type: 'button',
+        text: 'Unlink',
+        title: 'Detach this transaction from the bill, without touching the money',
+        onclick: () => {
+          commit((s) => actions.unlinkBillPayment(s, paidTransactionId), { label: 'unlink bill payment' });
+        },
+      }),
     );
   }
   if (entry.skipped) {
@@ -393,6 +413,12 @@ function occurrenceChip(bill: Bill, entry: BillOccurrence, money: Money): HTMLEl
       type: 'button',
       text: bill.autopay ? 'Record' : 'Pay',
       onclick: () => openPayBillForm(bill.id, entry.dueDate),
+    }),
+    h('button.link-btn', {
+      type: 'button',
+      text: 'Link…',
+      title: 'Point an existing transaction at this bill instead of recording a new one',
+      onclick: () => openLinkTransactionForm(bill.id, entry.dueDate),
     }),
   );
 }
