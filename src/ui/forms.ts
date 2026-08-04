@@ -18,6 +18,7 @@ import type {
   MonthKey, SavingsCreditFrequency, SeriesColor, Transaction, TxKind,
 } from '../core/model.ts';
 import { billById, billSnapshot, linkableTransactions } from '../core/bills.ts';
+import { cardInstallments } from '../core/installments.ts';
 import { categoryRow, monthSummary } from '../core/budget.ts';
 import { cardSnapshot, type CardSnapshot } from '../core/cards.ts';
 import { loanSnapshot, type LoanSnapshot } from '../core/loans.ts';
@@ -135,6 +136,13 @@ export function openTransactionForm({
       : null;
 
   const linkedBill = transaction?.billId ? billById(state, transaction.billId) : null;
+  const linkedInstallment = transaction?.installmentId
+    ? (state.installments ?? []).find((plan) => plan.id === transaction.installmentId) ?? null
+    : null;
+  // Rebuilt inside `render`, once the account picked is known — a select box
+  // with nothing in it yet, so `render` can fill and refill it as the account
+  // changes without losing the rest of the dialog.
+  const installmentSelect = select([]);
 
   const body = h('form.form', { onsubmit: (event: Event) => event.preventDefault() });
   const errorSlot = h('div.form-error-slot');
@@ -276,12 +284,27 @@ export function openTransactionForm({
     );
   };
 
-  accountSelect.addEventListener('change', renderHint);
+  // The full render, not just the hint: which card is picked also decides
+  // whether the instalment link/convert affordances below have anything to
+  // offer.
+  accountSelect.addEventListener('change', () => render());
   toSelect.addEventListener('change', renderHint);
 
   const render = (): void => {
     const isTransfer = mode === 'transfer';
     payeeInput.placeholder = mode === 'income' ? 'Employer, client…' : 'Where did it go?';
+
+    // Eligible to be tagged: an ordinary charge on a credit card, not the
+    // synthesised opening-balance row, and not already tagged with something
+    // else — the same shape `linkedBill` already reads as unavailable for.
+    const instalmentEligible =
+      Boolean(transaction) && !transaction!.system && mode === 'expense'
+      && isCredit(state.accounts.find((a) => a.id === accountSelect.value)) && !linkedInstallment;
+    const cardPlans = instalmentEligible ? cardInstallments(state, accountSelect.value) : [];
+    mount(
+      installmentSelect,
+      cardPlans.map((snapshot) => h('option', { value: snapshot.plan.id, text: snapshot.plan.description })),
+    );
 
     mount(
       body,
@@ -393,22 +416,75 @@ export function openTransactionForm({
             }),
           )
         : null,
-      transaction && !transaction.system && mode === 'expense' && isCredit(state.accounts.find((a) => a.id === accountSelect.value))
+      linkedInstallment
         ? h(
             'div.inline-note',
             null,
-            icon('repeat', { size: 16 }),
-            h('p', { text: 'Bought on fixed monthly billings instead of paid all at once?' }),
+            icon('link', { size: 16 }),
+            h('p', {
+              text: `Linked to ${linkedInstallment.description} — ${formatMoney(linkedInstallment.monthlyAmount, money())}/mo.`,
+            }),
             h('button.link-btn', {
               type: 'button',
-              text: 'Convert to instalment plan',
+              text: 'Unlink',
+              title: 'Detach this transaction from the plan, without touching the money',
               onclick: () => {
+                commit((s) => actions.unlinkInstallmentTransaction(s, transaction!.id), { label: 'unlink instalment' });
                 closeModal();
-                openConvertToInstallmentForm(transaction);
+                undoToast(`Unlinked from ${linkedInstallment.description}.`);
               },
             }),
           )
-        : null,
+        : instalmentEligible
+          ? [
+              cardPlans.length
+                ? h(
+                    'div.inline-note',
+                    null,
+                    icon('link', { size: 16 }),
+                    h(
+                      'div.inline-note-body',
+                      null,
+                      h('p', { text: 'One of this card’s tracked plans?' }),
+                      h(
+                        'div.inline-note-row',
+                        null,
+                        installmentSelect,
+                        h('button.btn.btn-sm', {
+                          type: 'button',
+                          text: 'Link',
+                          onclick: () => {
+                            const installmentId = installmentSelect.value;
+                            if (!installmentId) return;
+                            const chosen = cardPlans.find((p) => p.plan.id === installmentId)?.plan;
+                            commit(
+                              (s) => actions.linkInstallmentTransaction(s, { installmentId, transactionId: transaction!.id }),
+                              { label: 'link instalment' },
+                            );
+                            closeModal();
+                            undoToast(`Linked to ${chosen?.description ?? 'the plan'}.`);
+                          },
+                        }),
+                      ),
+                    ),
+                  )
+                : null,
+              h(
+                'div.inline-note',
+                null,
+                icon('repeat', { size: 16 }),
+                h('p', { text: 'Bought on fixed monthly billings instead of paid all at once?' }),
+                h('button.link-btn', {
+                  type: 'button',
+                  text: 'Convert to instalment plan',
+                  onclick: () => {
+                    closeModal();
+                    openConvertToInstallmentForm(transaction!);
+                  },
+                }),
+              ),
+            ]
+          : null,
       hintSlot,
       errorSlot,
     );

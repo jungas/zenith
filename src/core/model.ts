@@ -422,6 +422,17 @@ export interface Transaction {
    * the occurrence it settles, not to whichever window the calendar puts it in.
    */
   billDue?: ISODate | null;
+  /**
+   * The instalment plan this charge belongs to, when it is one of its monthly
+   * billings. Purely a label — unlike a bill occurrence, nothing about a
+   * plan's progress is read from this. `installments.ts` derives how many
+   * instalments are billed from the calendar alone, deliberately, so a plan
+   * already reads correctly whether or not any of its charges are tagged. The
+   * point of tagging one is to say, from the ledger, which purchase a charge
+   * belongs to — the same thing a card's own statement does by printing "3/12"
+   * next to it.
+   */
+  installmentId?: string | null;
 }
 
 /** Assigned amounts: month -> category -> cents. */
