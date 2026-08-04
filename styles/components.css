@@ -662,6 +662,34 @@ select.input {
   margin-left: auto;
 }
 
+/* A note that also holds a control row — a select plus a button — rather
+ * than just a sentence and a single link-styled action. The body takes the
+ * row's remaining width so the select can flex without fighting the icon for
+ * space, and the button inside it keeps its own size rather than stretching
+ * to match `.input`'s 100%. */
+.inline-note-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.inline-note-row {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: center;
+}
+
+.inline-note-row .input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.inline-note-row .btn {
+  flex: none;
+}
+
 .preset-row {
   display: flex;
   flex-wrap: wrap;

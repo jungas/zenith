@@ -335,11 +335,49 @@ export function updateInstallment(
   };
 }
 
+/**
+ * Stop tracking a plan.
+ *
+ * Its charges stay — they are real spending that really happened — but they
+ * stop pointing at a plan that no longer exists, the same way a deleted bill
+ * lets go of the payments that settled it.
+ */
 export function deleteInstallment(state: AppState, installmentId: string): AppState {
   return {
     ...state,
     installments: (state.installments ?? []).filter((plan) => plan.id !== installmentId),
+    transactions: state.transactions.map((t) =>
+      t.installmentId === installmentId ? { ...t, installmentId: null } : t,
+    ),
   };
+}
+
+export interface LinkInstallmentTransactionInput {
+  installmentId: string;
+  transactionId: string;
+}
+
+/**
+ * Tag an existing transaction as one of a plan's monthly billings.
+ *
+ * Purely a label: nothing about the plan's progress is read from it — see
+ * `Transaction.installmentId`. Refused across cards, the same rule a bill's
+ * own account would enforce if it were required to have one: a charge cannot
+ * belong to a plan billed on a card it was not made on.
+ */
+export function linkInstallmentTransaction(
+  state: AppState,
+  { installmentId, transactionId }: LinkInstallmentTransactionInput,
+): AppState {
+  const plan = (state.installments ?? []).find((p) => p.id === installmentId);
+  const transaction = state.transactions.find((t) => t.id === transactionId);
+  if (!plan || !transaction || transaction.accountId !== plan.accountId) return state;
+  return updateTransaction(state, transactionId, { installmentId });
+}
+
+/** Detach a transaction from the plan it is tagged with. The money stays exactly where it is. */
+export function unlinkInstallmentTransaction(state: AppState, transactionId: string): AppState {
+  return updateTransaction(state, transactionId, { installmentId: null });
 }
 
 export interface ConvertToInstallmentInput {

@@ -306,6 +306,93 @@ test('conversion is refused off a credit card, for non-expenses, and for too sho
   );
 });
 
+/* ── Tagging a transaction as one of a plan's billings ──────────────────── */
+
+test('linking a transaction tags it without touching the money', () => {
+  let state = stateWithPlan();
+  const cardId = account(state, 'BDO Gold').id;
+  state = actions.addTransaction(state, {
+    date: '2026-06-05', accountId: cardId, payee: 'Appliance — SM Megamall', amount: -2_000_00, kind: 'expense',
+  });
+  const txId = state.transactions[0].id;
+  const planId = plan(state).id;
+
+  const next = actions.linkInstallmentTransaction(state, { installmentId: planId, transactionId: txId });
+  const tx = must(next.transactions.find((t) => t.id === txId), 'the transaction');
+  assert.equal(tx.installmentId, planId);
+  assert.equal(tx.amount, -2_000_00, 'linking changes nothing about the charge itself');
+
+  // Purely a label: the calendar-derived progress does not move because a
+  // charge was tagged, and reads exactly the same if it never had been.
+  assert.deepEqual(
+    installmentSnapshot(plan(next), '2026-06'),
+    installmentSnapshot(plan(state), '2026-06'),
+  );
+});
+
+test('linking is refused across cards, and for an unknown plan or transaction', () => {
+  let state = stateWithPlan();
+  const cardId = account(state, 'BDO Gold').id;
+  const planId = plan(state).id;
+  state = actions.addAccount(state, { name: 'Other Card', type: 'credit', creditLimit: 100_000_00, openedOn: '2026-04-01' });
+  const otherId = account(state, 'Other Card').id;
+  state = actions.addTransaction(state, {
+    date: '2026-06-05', accountId: otherId, payee: 'Somewhere else', amount: -2_000_00, kind: 'expense',
+  });
+  const txOnOtherCard = state.transactions[0].id;
+
+  assert.equal(
+    actions.linkInstallmentTransaction(state, { installmentId: planId, transactionId: txOnOtherCard }),
+    state,
+    'a charge on a different card cannot belong to this plan',
+  );
+
+  state = actions.addTransaction(state, {
+    date: '2026-06-05', accountId: cardId, payee: 'Appliance', amount: -2_000_00, kind: 'expense',
+  });
+  const txId = state.transactions[1].id;
+  assert.equal(
+    actions.linkInstallmentTransaction(state, { installmentId: 'missing', transactionId: txId }),
+    state,
+  );
+  assert.equal(
+    actions.linkInstallmentTransaction(state, { installmentId: planId, transactionId: 'missing' }),
+    state,
+  );
+});
+
+test('unlinking detaches the tag, and the money stays exactly where it is', () => {
+  let state = stateWithPlan();
+  const cardId = account(state, 'BDO Gold').id;
+  state = actions.addTransaction(state, {
+    date: '2026-06-05', accountId: cardId, payee: 'Appliance', amount: -2_000_00, kind: 'expense',
+  });
+  const txId = state.transactions[0].id;
+  state = actions.linkInstallmentTransaction(state, { installmentId: plan(state).id, transactionId: txId });
+  assert.ok(must(state.transactions.find((t) => t.id === txId), 'the transaction').installmentId);
+
+  const next = actions.unlinkInstallmentTransaction(state, txId);
+  const tx = must(next.transactions.find((t) => t.id === txId), 'the transaction');
+  assert.equal(tx.installmentId, null);
+  assert.equal(tx.amount, -2_000_00);
+});
+
+test('stopping a plan clears the tag from whatever it was linked to', () => {
+  let state = stateWithPlan();
+  const cardId = account(state, 'BDO Gold').id;
+  state = actions.addTransaction(state, {
+    date: '2026-06-05', accountId: cardId, payee: 'Appliance', amount: -2_000_00, kind: 'expense',
+  });
+  const txId = state.transactions[0].id;
+  state = actions.linkInstallmentTransaction(state, { installmentId: plan(state).id, transactionId: txId });
+
+  const next = actions.deleteInstallment(state, plan(state).id);
+  assert.deepEqual(next.installments, []);
+  const tx = must(next.transactions.find((t) => t.id === txId), 'the transaction');
+  assert.equal(tx.installmentId, null, 'nothing dangles once the plan is gone');
+  assert.equal(tx.amount, -2_000_00, 'the charge itself is untouched');
+});
+
 test('deleting a card takes its plans with it', () => {
   const state = stateWithPlan();
   const next = actions.deleteAccount(state, account(state, 'BDO Gold').id);
