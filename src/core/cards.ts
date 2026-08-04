@@ -6,6 +6,7 @@
 
 import { addDays, currentMonth, daysBetween, monthOf, nextDayOfMonth, parseISO, todayISO, toISO } from './dates.ts';
 import { accountBalance, categoryRow, monthSummary, ledgerTransactions } from './budget.ts';
+import { installmentSummary } from './installments.ts';
 import {
   effectiveCreditLimit, isCredit, paymentCategoryFor, sharedLimitFor, sharedLimitMembers,
   sharedLimitSiblings,
@@ -50,9 +51,21 @@ export interface CardSnapshot {
   creditLimit: Cents;
   /**
    * The balance the limit is measured against — this card's, or the combined
-   * balance of every card on the shared limit.
+   * balance of every card on the shared limit. Includes what this card's own
+   * instalment plans still have left to bill — see `instalmentCommitted`.
    */
   limitBalance: Cents;
+  /**
+   * What this card's own instalment plans still have left to bill, already
+   * folded into `limitBalance` and `availableCredit`.
+   *
+   * An issuer holds a plan's whole remaining run against the limit from the
+   * month it is agreed, not one instalment's worth at a time — the same reason
+   * `installments.ts` treats the run as a single commitment rather than a
+   * queue of separate charges. `balance` stays the money actually billed so
+   * far; this is what is still to come.
+   */
+  instalmentCommitted: Cents;
   /** The other cards drawing on the same limit. */
   siblings: CreditAccount[];
   statementBalance: Cents;
@@ -97,6 +110,8 @@ export interface DebtSummary {
   uncovered: Cents;
   minimums: Cents;
   monthlyInterestCost: Cents;
+  /** What every card's instalment plans still have left to bill, already folded into `utilization`. */
+  instalmentCommitted: Cents;
   utilization: number | null;
   band: UtilizationBand;
 }
@@ -124,18 +139,34 @@ export function cardBalance(state: AppState, cardId: string, throughISO: ISODate
 }
 
 /**
+ * What a card owes, plus what its own instalment plans still have left to
+ * bill.
+ *
+ * An issuer holds a plan's whole remaining run against the limit the moment it
+ * is agreed to, not one instalment at a time — the ₱22,000 left on a ₱24,000
+ * appliance is credit already lent, whether or not eleven more statements have
+ * printed it yet. `cardBalance` only knows about the instalments that have
+ * actually reached the ledger as ordinary charges; this adds what has not.
+ */
+export function committedBalance(state: AppState, cardId: string, month: MonthKey = currentMonth()): Cents {
+  return cardBalance(state, cardId) + installmentSummary(state, { cardId, month }).remaining;
+}
+
+/**
  * The balance a card's limit is measured against.
  *
  * For a card on a shared limit that is the *combined* balance of every card on
  * it, because that is what the bank counts. Spending on a sibling card really
  * does reduce what is left on this one, and reporting otherwise would tell you
- * there is headroom the issuer will decline.
+ * there is headroom the issuer will decline. Each member's figure is its own
+ * `committedBalance`, so an instalment plan on one card takes the same bite out
+ * of the shared headroom that a purchase would.
  */
-export function limitBalance(state: AppState, card: CreditAccount): Cents {
+export function limitBalance(state: AppState, card: CreditAccount, month: MonthKey = currentMonth()): Cents {
   const shared = sharedLimitFor(state, card);
-  if (!shared) return cardBalance(state, card.id);
+  if (!shared) return committedBalance(state, card.id, month);
   return sharedLimitMembers(state, shared.id).reduce(
-    (total, member) => total + cardBalance(state, member.id),
+    (total, member) => total + committedBalance(state, member.id, month),
     0,
   );
 }
@@ -144,9 +175,10 @@ export function limitBalance(state: AppState, card: CreditAccount): Cents {
 export function limitStanding(
   state: AppState,
   card: CreditAccount,
+  month: MonthKey = currentMonth(),
 ): { limit: Cents; balance: Cents; available: Cents; ratio: number | null } {
   const limit = effectiveCreditLimit(state, card);
-  const balance = limitBalance(state, card);
+  const balance = limitBalance(state, card, month);
   return {
     limit,
     balance,
@@ -227,8 +259,11 @@ export function cardSnapshot(
   const statement = statementBalance(state, card, asOf);
   const minimum = minimumPayment(card, statement || balance);
   // Utilisation is measured against the shared limit when there is one, so a
-  // sibling card's spending shows up here as it does on the bank's own screen.
-  const standing = limitStanding(state, card);
+  // sibling card's spending shows up here as it does on the bank's own screen —
+  // and against what this card's own instalment plans still have left to bill,
+  // so a plan taken out this month shows up as headroom lost immediately.
+  const standing = limitStanding(state, card, month);
+  const instalmentCommitted = installmentSummary(state, { cardId: card.id, month }).remaining;
 
   let spentThisMonth = 0;
   let paidThisMonth = 0;
@@ -254,6 +289,7 @@ export function cardSnapshot(
     sharedLimit: sharedLimitFor(state, card),
     creditLimit: standing.limit,
     limitBalance: standing.balance,
+    instalmentCommitted,
     siblings: sharedLimitSiblings(state, card),
     statementBalance: statement,
     minimumPayment: minimum,
@@ -390,6 +426,11 @@ export function debtSummary(state: AppState, opts: SnapshotOptions = {}): DebtSu
   const uncovered = snaps.reduce((total, s) => total + s.uncovered, 0);
   const monthlyInterestCost = snaps.reduce((total, s) => total + s.monthlyInterestCost, 0);
   const minimums = snaps.reduce((total, s) => total + s.minimumPayment, 0);
+  // Each plan belongs to exactly one card's own account, so summing every
+  // card's own figure double-counts nothing — unlike `limitBalance`, which
+  // repeats a shared limit's combined balance on each of its members.
+  const instalmentCommitted = snaps.reduce((total, s) => total + s.instalmentCommitted, 0);
+  const exposure = balance + instalmentCommitted;
   return {
     cards: snaps,
     balance,
@@ -398,7 +439,8 @@ export function debtSummary(state: AppState, opts: SnapshotOptions = {}): DebtSu
     uncovered,
     minimums,
     monthlyInterestCost,
-    utilization: limit ? balance / limit : null,
-    band: utilizationBand(limit ? balance / limit : null, state.settings?.utilizationWarn ?? 0.3),
+    instalmentCommitted,
+    utilization: limit ? exposure / limit : null,
+    band: utilizationBand(limit ? exposure / limit : null, state.settings?.utilizationWarn ?? 0.3),
   };
 }

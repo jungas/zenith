@@ -20,7 +20,7 @@ import { cardInstallments, installmentSummary } from '../core/installments.ts';
 import type { InstallmentSnapshot } from '../core/installments.ts';
 import { queryTransactions } from '../core/budget.ts';
 import {
-  cardBalance, cardSnapshot, creditAccounts, debtSummary, payoffComparison, quotedRate,
+  cardSnapshot, committedBalance, creditAccounts, debtSummary, payoffComparison, quotedRate,
 } from '../core/cards.ts';
 import * as actions from '../core/actions.ts';
 import { commit, getState, moneyOpts, undo } from '../store.ts';
@@ -62,7 +62,7 @@ function installmentPanel(
         addButton,
       ),
       h('p.card-text', {
-        text: 'Nothing on instalment. When a purchase is spread over monthly billings, tracking it here shows how much of each future bill is already committed — and when it stops.',
+        text: 'Nothing on instalment. When a purchase is spread over monthly billings, tracking it here shows how much of each future bill is already committed — and when it stops. The remaining run counts against this card’s available credit as soon as it is tracked, whether or not it has been billed yet.',
       }),
     );
   }
@@ -76,7 +76,7 @@ function installmentPanel(
     ),
     h('p.card-text', {
       text: summary.activeCount
-        ? `${formatMoney(summary.monthly, money)} of this month's bill is instalments, with ${formatMoney(summary.remaining, money)} still to be billed after it.`
+        ? `${formatMoney(summary.monthly, money)} of this month's bill is instalments, with ${formatMoney(summary.remaining, money)} still to be billed after it — already held against this card's available credit.`
         : 'Every plan on this card has finished billing.',
     }),
     h('ul.installment-list', { role: 'list' }, plans.map((plan) => installmentRow(plan, money))),
@@ -136,11 +136,17 @@ function installmentRow(
         ? `All ${plan.months} billed · finished ${monthLabel(snapshot.lastMonth, money.locale)}`
         : `${snapshot.billed} of ${plan.months} billed · ${formatMoney(snapshot.remainingAmount, money)} left · ends ${monthLabel(snapshot.lastMonth, money.locale)}`,
     }),
-    snapshot.interestCost != null && snapshot.interestCost > 0
+    // The issuer's own breakdown, when there is one, is more precise than
+    // guessing at a whole-plan overrun from the price alone — so it wins.
+    snapshot.monthlyInterest > 0
       ? h('p.installment-meta', {
-          text: `Costs ${formatMoney(snapshot.interestCost, money)} more than the ${formatMoney(plan.principal ?? 0, money)} price.`,
+          text: `${formatMoney(snapshot.monthlyPrincipal, money)} principal + ${formatMoney(snapshot.monthlyInterest, money)} interest each month · ${formatMoney(snapshot.remainingInterest, money)} interest left to pay.`,
         })
-      : null,
+      : snapshot.interestCost != null && snapshot.interestCost > 0
+        ? h('p.installment-meta', {
+            text: `Costs ${formatMoney(snapshot.interestCost, money)} more than the ${formatMoney(plan.principal ?? 0, money)} price.`,
+          })
+        : null,
   );
 }
 
@@ -172,7 +178,9 @@ function sharedLimitPanel(
       'ul.mini-list',
       { role: 'list' },
       members.map((member) => {
-        const owed = cardBalance(state, member.id);
+        // Committed, not just billed — so these rows add up to "Used across
+        // all cards" below, instalments and all.
+        const owed = committedBalance(state, member.id);
         return h(
           'li.mini-row',
           null,
@@ -305,7 +313,10 @@ function sharedLimitNote(
   money: Required<Pick<MoneyOptions, 'currency' | 'locale'>>,
 ): HTMLElement {
   const others = snap.siblings.map((card) => card.name).join(', ');
-  const ownShare = snap.balance;
+  // This card's own bite out of the shared limit — its balance, plus whatever
+  // its own instalment plans still have left to bill, the same figure
+  // `limitBalance` folds in for every member.
+  const ownShare = snap.balance + snap.instalmentCommitted;
   const rest = snap.limitBalance - ownShare;
   return h(
     'div.shared-limit',

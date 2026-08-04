@@ -1514,12 +1514,20 @@ export function openInstallmentForm({
     value: installment?.principal ? centsToInput(installment.principal) : '',
     placeholder: 'Optional',
   });
+  // Only interest is asked for — principal is just what is left of the billing
+  // once interest is taken out, so a second field for it could only disagree
+  // with the first.
+  const interestInput = moneyInput({
+    value: installment?.monthlyInterest ? centsToInput(installment.monthlyInterest) : '',
+    placeholder: 'Optional',
+  });
 
   const summarySlot = h('div.hint-slot');
   const renderSummary = (): void => {
     const monthly = Math.abs(parseMoney(monthlyInput.value));
     const months = Math.max(0, Number.parseInt(monthsInput.value, 10) || 0);
     const principal = Math.abs(parseMoney(principalInput.value));
+    const interest = Math.min(monthly, Math.abs(parseMoney(interestInput.value)));
     if (!monthly || !months) {
       mount(summarySlot);
       return;
@@ -1541,10 +1549,15 @@ export function openInstallmentForm({
                 ? `, which is ${formatMoney(cost, money())} more than the ${formatMoney(principal, money())} price — not 0%.`
                 : `, the same as the ${formatMoney(principal, money())} price. A genuine 0% plan.`),
         }),
+        interest > 0
+          ? h('p', {
+              text: `${formatMoney(interest, money())} of each billing is interest — ${formatMoney(monthly - interest, money())} actually pays down the price, ${formatMoney(interest * months, money())} in interest over the whole plan.`,
+            })
+          : null,
       ),
     );
   };
-  for (const control of [monthlyInput, monthsInput, principalInput, startInput]) {
+  for (const control of [monthlyInput, monthsInput, principalInput, interestInput, startInput]) {
     control.addEventListener('input', renderSummary);
   }
   renderSummary();
@@ -1572,9 +1585,13 @@ export function openInstallmentForm({
         hint: 'Optional — reveals what the plan costs.',
       }),
     ),
+    field('Interest each month', interestInput, {
+      id: 'inst-interest',
+      hint: 'Optional — when the issuer bills interest on top of the price, how much of each billing it is.',
+    }),
     summarySlot,
     h('div.inline-note', null, icon('info', { size: 16 }), h('p', {
-      text: 'Tracking a plan does not create any transactions. Each month\u2019s instalment still arrives as an ordinary charge — this is here so you can see what is still to come.',
+      text: 'Tracking a plan does not create any transactions. Each month\u2019s instalment still arrives as an ordinary charge — this is here so you can see what is still to come, and the whole remaining run already counts against this card\u2019s available credit.',
     })),
     errorSlot,
   );
@@ -1592,6 +1609,7 @@ export function openInstallmentForm({
         })));
         return;
       }
+      const monthlyInterest = Math.min(monthlyAmount, Math.abs(parseMoney(interestInput.value))) || null;
       const patch: Partial<Installment> = {
         accountId: cardId,
         description,
@@ -1599,6 +1617,8 @@ export function openInstallmentForm({
         months,
         startMonth: startInput.value || currentMonth(),
         principal: Math.abs(parseMoney(principalInput.value)) || null,
+        monthlyInterest,
+        monthlyPrincipal: monthlyInterest != null ? monthlyAmount - monthlyInterest : null,
       };
       if (existing) commit((s) => actions.updateInstallment(s, existing.id, patch), { label: 'edit plan' });
       else commit((s) => actions.addInstallment(s, patch), { label: 'track plan' });

@@ -145,6 +145,22 @@ test('spending on a sibling card reduces this card’s available credit', () => 
   assert.equal(after.balance, 0, 'without adding anything to this card');
 });
 
+test('an instalment plan on one card eats into a sibling’s headroom too', () => {
+  let state = withSharedBdo();
+  state = actions.addInstallment(state, {
+    accountId: card(state, 'BDO Platinum').id,
+    description: 'Refrigerator', monthlyAmount: 2_000_00, months: 10, startMonth: MONTH,
+  });
+
+  const gold = cardSnapshot(state, card(state, 'BDO Gold'), { month: MONTH });
+  const platinum = cardSnapshot(state, card(state, 'BDO Platinum'), { month: MONTH });
+  // 9 months left after this one, on a limit neither card has touched with a
+  // charge — the commitment alone is what moves it.
+  assert.equal(platinum.instalmentCommitted, 18_000_00);
+  assert.equal(gold.availableCredit, 200_000_00 - 18_000_00);
+  assert.equal(gold.availableCredit, platinum.availableCredit, 'one shared limit, one figure');
+});
+
 test('an unshared card is unaffected by the others', () => {
   let state = withSharedBdo();
   state = spend(state, 'BDO Gold', 30_000_00);

@@ -88,6 +88,50 @@ test('a plan that bills more than the price is not 0%', () => {
   assert.equal(installmentSnapshot(plan(unknown), '2026-06').interestCost, null);
 });
 
+/* ── Splitting a billing into principal and interest ────────────────────── */
+
+test('absent a split, the whole billing is assumed to be principal', () => {
+  const state = stateWithPlan();
+  const snap = installmentSnapshot(plan(state), '2026-06');
+  assert.equal(snap.monthlyPrincipal, 2_000_00);
+  assert.equal(snap.monthlyInterest, 0);
+  assert.equal(snap.billedPrincipal, snap.billedAmount);
+  assert.equal(snap.remainingInterest, 0);
+});
+
+test('an explicit split reports principal and interest paid, and left to pay', () => {
+  let state = stateWithPlan();
+  state = actions.updateInstallment(state, plan(state).id, {
+    monthlyAmount: 2_000_00, monthlyPrincipal: 1_850_00, monthlyInterest: 150_00,
+  });
+
+  // Midway: the third of twelve, billed in June.
+  const snap = installmentSnapshot(plan(state), '2026-06');
+  assert.equal(snap.billed, 3);
+  assert.equal(snap.billedPrincipal, 3 * 1_850_00);
+  assert.equal(snap.billedInterest, 3 * 150_00);
+  assert.equal(snap.remainingPrincipal, 9 * 1_850_00);
+  assert.equal(snap.remainingInterest, 9 * 150_00);
+  // The issuer's own figure, exact — not inferred from a purchase price.
+  assert.equal(snap.interestCost, 12 * 150_00);
+});
+
+test('giving only the interest portion derives the principal from what is left', () => {
+  let state = stateWithPlan();
+  state = actions.updateInstallment(state, plan(state).id, { monthlyInterest: 150_00, monthlyPrincipal: null });
+  const snap = installmentSnapshot(plan(state), '2026-06');
+  assert.equal(snap.monthlyInterest, 150_00);
+  assert.equal(snap.monthlyPrincipal, 2_000_00 - 150_00);
+});
+
+test('a split survives a backup round trip', () => {
+  let state = stateWithPlan();
+  state = actions.updateInstallment(state, plan(state).id, { monthlyPrincipal: 1_850_00, monthlyInterest: 150_00 });
+  const restored = actions.fromBackup(actions.toBackup(state));
+  assert.equal(plan(restored).monthlyPrincipal, 1_850_00);
+  assert.equal(plan(restored).monthlyInterest, 150_00);
+});
+
 /* ── Totals ───────────────────────────────────────────────────────────── */
 
 test('the monthly figure counts only the plans billing that month', () => {
