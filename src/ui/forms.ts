@@ -393,6 +393,22 @@ export function openTransactionForm({
             }),
           )
         : null,
+      transaction && !transaction.system && mode === 'expense' && isCredit(state.accounts.find((a) => a.id === accountSelect.value))
+        ? h(
+            'div.inline-note',
+            null,
+            icon('repeat', { size: 16 }),
+            h('p', { text: 'Bought on fixed monthly billings instead of paid all at once?' }),
+            h('button.link-btn', {
+              type: 'button',
+              text: 'Convert to instalment plan',
+              onclick: () => {
+                closeModal();
+                openConvertToInstallmentForm(transaction);
+              },
+            }),
+          )
+        : null,
       hintSlot,
       errorSlot,
     );
@@ -1609,6 +1625,145 @@ export function openInstallmentForm({
   ];
 
   openModal({ title: existing ? 'Edit instalment plan' : `Instalment plan on ${card.name}`, body, footer });
+}
+
+/**
+ * Turn a transaction already in the ledger into an instalment plan.
+ *
+ * The price is not asked for — it is already the transaction's own amount,
+ * which is the whole reason this exists instead of "track a plan" with the
+ * figures typed in again. Only the term is asked for; the monthly billing
+ * defaults to the price split evenly across it, editable in case the issuer's
+ * own rounding lands somewhere else.
+ */
+export function openConvertToInstallmentForm(transaction: Transaction): void {
+  const state = getState();
+  const card = state.accounts.find((a) => a.id === transaction.accountId);
+  if (!isCredit(card)) return;
+  const principal = Math.abs(transaction.amount);
+
+  const descriptionInput = input({
+    value: transaction.payee || '',
+    placeholder: 'Appliance — SM Megamall',
+    required: true,
+  });
+  const monthsInput = h<HTMLInputElement>('input.input', {
+    type: 'number', min: '2', max: '60', step: '1', value: '12',
+  });
+  const monthlyInput = moneyInput({ value: centsToInput(Math.round(principal / 12)), required: true });
+  const startInput = h<HTMLInputElement>('input.input', {
+    type: 'month', value: monthOf(transaction.date),
+  });
+
+  const summarySlot = h('div.hint-slot');
+  const renderSummary = (): void => {
+    const monthly = Math.abs(parseMoney(monthlyInput.value));
+    const months = Math.max(0, Number.parseInt(monthsInput.value, 10) || 0);
+    if (!monthly || !months) {
+      mount(summarySlot);
+      return;
+    }
+    const total = monthly * months;
+    const diff = total - principal;
+    mount(
+      summarySlot,
+      h(
+        'div.inline-note',
+        null,
+        icon('info', { size: 16 }),
+        h('p', {
+          text:
+            `${months} × ${formatMoney(monthly, money())} is ${formatMoney(total, money())} in total` +
+            (diff === 0
+              ? `, matching the ${formatMoney(principal, money())} already charged.`
+              : diff > 0
+                ? `, which is ${formatMoney(diff, money())} more than the ${formatMoney(principal, money())} already charged.`
+                : `, which is ${formatMoney(-diff, money())} less than the ${formatMoney(principal, money())} already charged.`),
+        }),
+      ),
+    );
+  };
+  // Re-splits the known price across the new term, until the monthly figure is
+  // edited by hand — from then on that is what the issuer is trusted to bill.
+  let monthlyEdited = false;
+  monthsInput.addEventListener('input', () => {
+    if (!monthlyEdited) {
+      const months = Math.max(1, Number.parseInt(monthsInput.value, 10) || 1);
+      monthlyInput.value = centsToInput(Math.round(principal / months));
+    }
+    renderSummary();
+  });
+  monthlyInput.addEventListener('input', () => {
+    monthlyEdited = true;
+    renderSummary();
+  });
+  renderSummary();
+
+  const errorSlot = h('div.form-error-slot');
+  const body = h(
+    'form.form',
+    { onsubmit: (event: Event) => event.preventDefault() },
+    h(
+      'div.inline-note',
+      null,
+      icon('repeat', { size: 16 }),
+      h('p', {
+        text: `The ${formatMoney(principal, money())} charged on ${formatDate(transaction.date, money().locale)} becomes the first instalment, rewritten down to what is billed each month.`,
+      }),
+    ),
+    field('What was bought', descriptionInput, { id: 'conv-what' }),
+    h(
+      'div.form-grid',
+      null,
+      field('Number of months', monthsInput, { id: 'conv-months' }),
+      field('Billed each month', monthlyInput, { id: 'conv-monthly' }),
+    ),
+    field('First instalment', startInput, {
+      id: 'conv-start',
+      hint: 'The month this charge belongs to.',
+    }),
+    summarySlot,
+    errorSlot,
+  );
+
+  const submit = h('button.btn.btn-primary', {
+    type: 'button',
+    text: 'Convert',
+    onclick: () => {
+      const description = descriptionInput.value.trim();
+      const monthlyAmount = Math.abs(parseMoney(monthlyInput.value));
+      const months = Math.max(0, Number.parseInt(monthsInput.value, 10) || 0);
+      if (!description || !monthlyAmount || months < 2) {
+        mount(errorSlot, h('p.form-error', null, icon('alert', { size: 15 }), h('span', {
+          text: 'A plan needs a description, a monthly amount and at least two months.',
+        })));
+        return;
+      }
+      commit(
+        (s) =>
+          actions.convertTransactionToInstallment(s, {
+            transactionId: transaction.id,
+            description,
+            monthlyAmount,
+            months,
+            startMonth: startInput.value || monthOf(transaction.date),
+          }),
+        { label: 'convert to instalment plan' },
+      );
+      closeModal();
+      undoToast(`Converted to a ${months}-month instalment plan.`);
+    },
+  });
+
+  openModal({
+    title: `Convert to instalment plan on ${card.name}`,
+    body,
+    footer: [
+      h('div.foot-spacer'),
+      h('button.btn', { type: 'button', text: 'Cancel', onclick: closeModal }),
+      submit,
+    ],
+  });
 }
 
 /* ── Recurring bills ──────────────────────────────────────────────────── */

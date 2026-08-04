@@ -161,6 +161,107 @@ test('a plan needs a card, a term and an amount', () => {
   assert.equal(actions.addInstallment(state, { accountId: cardId, monthlyAmount: 100_00, months: 6, startMonth: '' }).installments.length, before);
 });
 
+/* ── Converting an existing transaction ───────────────────────────────── */
+
+test('converting a transaction to instalments rewrites it down to the monthly figure', () => {
+  let state = emptyState(new Date(2026, 3, 1));
+  state = actions.addAccount(state, {
+    name: 'BDO Gold', type: 'credit', provider: 'BDO', creditLimit: 200_000_00, openedOn: '2026-04-01',
+  });
+  const cardId = account(state, 'BDO Gold').id;
+  state = actions.addTransaction(state, {
+    date: '2026-04-10', accountId: cardId, payee: 'Appliance — SM Megamall', amount: -24_000_00, kind: 'expense',
+  });
+  const txId = state.transactions[0].id;
+
+  const next = actions.convertTransactionToInstallment(state, { transactionId: txId, months: 12 });
+
+  // The plan carries the price and the term …
+  assert.equal(next.installments.length, 1);
+  const plan = next.installments[0];
+  assert.equal(plan.principal, 24_000_00);
+  assert.equal(plan.monthlyAmount, 2_000_00);
+  assert.equal(plan.months, 12);
+  assert.equal(plan.startMonth, '2026-04');
+  assert.equal(plan.description, 'Appliance — SM Megamall');
+
+  // … and the transaction becomes the first instalment rather than a second charge.
+  const tx = must(next.transactions.find((t) => t.id === txId), 'the transaction');
+  assert.equal(tx.amount, -2_000_00);
+  assert.equal(next.transactions.length, 1, 'no second transaction was created');
+});
+
+test('a chosen monthly figure and description override the defaults', () => {
+  let state = emptyState(new Date(2026, 3, 1));
+  state = actions.addAccount(state, {
+    name: 'BDO Gold', type: 'credit', provider: 'BDO', creditLimit: 200_000_00, openedOn: '2026-04-01',
+  });
+  const cardId = account(state, 'BDO Gold').id;
+  state = actions.addTransaction(state, {
+    date: '2026-04-10', accountId: cardId, payee: 'Sofa', amount: -10_000_00, kind: 'expense',
+  });
+  const txId = state.transactions[0].id;
+
+  const next = actions.convertTransactionToInstallment(state, {
+    transactionId: txId, months: 3, monthlyAmount: 3_500_00, description: 'Sofa — 0% promo', startMonth: '2026-05',
+  });
+  const plan = next.installments[0];
+  assert.equal(plan.monthlyAmount, 3_500_00, 'the issuer’s own figure wins over an even split');
+  assert.equal(plan.description, 'Sofa — 0% promo');
+  assert.equal(plan.startMonth, '2026-05');
+  assert.equal(plan.principal, 10_000_00, 'the price is what was actually charged, not the new monthly total');
+
+  const tx = must(next.transactions.find((t) => t.id === txId), 'the transaction');
+  assert.equal(tx.amount, -3_500_00);
+});
+
+test('conversion is refused off a credit card, for non-expenses, and for too short a term', () => {
+  let state = emptyState(new Date(2026, 3, 1));
+  state = actions.addAccount(state, { name: 'Chequing', type: 'checking' });
+  state = actions.addAccount(state, {
+    name: 'BDO Gold', type: 'credit', provider: 'BDO', creditLimit: 200_000_00, openedOn: '2026-04-01',
+  });
+  const cardId = account(state, 'BDO Gold').id;
+  const checkingId = account(state, 'Chequing').id;
+
+  state = actions.addTransaction(state, {
+    date: '2026-04-10', accountId: checkingId, payee: 'Groceries', amount: -3_000_00, kind: 'expense',
+  });
+  const notOnACard = state.transactions[0].id;
+  assert.equal(
+    actions.convertTransactionToInstallment(state, { transactionId: notOnACard, months: 6 }).installments.length,
+    0,
+    'not on a credit card',
+  );
+
+  state = actions.addTransaction(state, {
+    date: '2026-04-10', accountId: cardId, payee: 'Salary bonus', amount: 5_000_00, kind: 'income',
+  });
+  const income = state.transactions[1].id;
+  assert.equal(
+    actions.convertTransactionToInstallment(state, { transactionId: income, months: 6 }).installments.length,
+    0,
+    'income is not a purchase',
+  );
+
+  state = actions.addTransaction(state, {
+    date: '2026-04-10', accountId: cardId, payee: 'Coffee', amount: -150_00, kind: 'expense',
+  });
+  const oneMonth = state.transactions[2].id;
+  assert.equal(
+    actions.convertTransactionToInstallment(state, { transactionId: oneMonth, months: 1 }).installments.length,
+    0,
+    'a single instalment is not a plan',
+  );
+
+  const before = state.transactions.length;
+  assert.equal(
+    actions.convertTransactionToInstallment(state, { transactionId: 'missing', months: 6 }).transactions.length,
+    before,
+    'an unknown transaction changes nothing',
+  );
+});
+
 test('deleting a card takes its plans with it', () => {
   const state = stateWithPlan();
   const next = actions.deleteAccount(state, account(state, 'BDO Gold').id);
