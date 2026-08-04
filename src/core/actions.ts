@@ -12,7 +12,7 @@ import type {
   Account, AccountDraft, AppState, Bill, Budgets, Category, Cents, Installment, ISODate, MonthKey,
   SharedLimit, Transaction,
 } from './model.ts';
-import { todayISO } from './dates.ts';
+import { monthOf, todayISO } from './dates.ts';
 import { billById, billFunding, forecastAmount, isSkipped } from './bills.ts';
 import { readyToAssign } from './budget.ts';
 
@@ -340,6 +340,61 @@ export function deleteInstallment(state: AppState, installmentId: string): AppSt
     ...state,
     installments: (state.installments ?? []).filter((plan) => plan.id !== installmentId),
   };
+}
+
+export interface ConvertToInstallmentInput {
+  transactionId: string;
+  /** How many monthly instalments the plan runs for. */
+  months: number;
+  description?: string;
+  /** Defaults to the month the transaction fell in. */
+  startMonth?: MonthKey;
+  /** What is billed each month. Defaults to the price divided evenly across the term. */
+  monthlyAmount?: Cents;
+}
+
+/**
+ * Turn a purchase already sitting in the ledger into an instalment plan.
+ *
+ * A charge typed in — or read off a statement — before anyone told Zenith it
+ * was on terms still holds the full price, because that is what was known at
+ * the time. This does what a card issuer does on the next statement: the price
+ * survives as the plan's `principal`, and the transaction itself is rewritten
+ * down to what is actually billed each month, becoming the first instalment
+ * rather than a second charge sitting beside the plan.
+ *
+ * Refused off a credit card, and for anything that is not an ordinary expense
+ * — a plan bills a card, and there is no "instalment" on a transfer, income, or
+ * the synthesised opening-balance row.
+ */
+export function convertTransactionToInstallment(
+  state: AppState,
+  input: ConvertToInstallmentInput,
+): AppState {
+  const transaction = state.transactions.find((t) => t.id === input.transactionId);
+  if (!transaction || transaction.system || transaction.kind !== 'expense') return state;
+  const card = state.accounts.find((a) => a.id === transaction.accountId);
+  if (!isCredit(card)) return state;
+
+  const principal = Math.abs(Math.round(transaction.amount));
+  const months = Math.max(0, Math.round(input.months) || 0);
+  if (!principal || months < 2) return state;
+  const monthlyAmount = Math.max(0, Math.round(input.monthlyAmount ?? principal / months));
+  if (!monthlyAmount) return state;
+
+  const next = addInstallment(state, {
+    accountId: card.id,
+    description: input.description?.trim() || transaction.payee || 'Instalment plan',
+    monthlyAmount,
+    months,
+    startMonth: input.startMonth || monthOf(transaction.date),
+    principal,
+  });
+  // `addInstallment` refuses silently on bad input; nothing to point the
+  // transaction at if that is what just happened.
+  if (next.installments.length === state.installments.length) return state;
+
+  return updateTransaction(next, transaction.id, { amount: -monthlyAmount });
 }
 
 /* ── Recurring bills ──────────────────────────────────────────────────── */
