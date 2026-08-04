@@ -174,8 +174,19 @@ full keyboard navigation, and a focus-trapped dialog.
   them here would bill every purchase twice. A plan is a schedule of what is
   still to come, not a second copy of what has happened.
 
+  It still counts against what you can spend, though: the whole remaining run
+  is held against the card's **available credit** the moment the plan is
+  tracked, not one instalment at a time — the same way the issuer's own app
+  shows it. A ₱22,000 balance still owed on an appliance eats ₱22,000 of
+  headroom whether or not eleven more statements have printed it yet, and on a
+  shared limit it takes the same bite out of every card drawing on it.
+
   Give it the purchase price and it will also say what the plan costs — a "0%"
-  plan that bills ₱26,400 for a ₱24,000 purchase is not 0%.
+  plan that bills ₱26,400 for a ₱24,000 purchase is not 0%. When the issuer
+  breaks the billing itself into principal and interest, giving the interest
+  portion is more precise still: the plan reports exactly how much of each
+  billing pays down the price and how much is the cost of the plan, rather than
+  inferring a whole-plan total from the purchase price alone.
 
   Every plan carries **edit** and **stop tracking** buttons on its own row.
   Removing one destroys nothing — the charges it billed are ordinary

@@ -8,7 +8,7 @@ import type { AppState, CreditAccount } from '../src/core/model.ts';
 import * as actions from '../src/core/actions.ts';
 import { account, category, creditAccount } from './helpers.ts';
 import {
-  cardBalance, cardSnapshot, debtSummary, minimumPayment, payoffComparison,
+  cardBalance, cardSnapshot, committedBalance, debtSummary, minimumPayment, payoffComparison,
   payoffSchedule, statementCycle, upcomingPayments, utilizationBand,
 } from '../src/core/cards.ts';
 import { accountBalance, reconcile } from '../src/core/budget.ts';
@@ -67,6 +67,65 @@ test('utilisation and available credit follow the balance', () => {
   assert.equal(snap.availableCredit, 300_000);
   assert.equal(snap.utilization, 0.25);
   assert.equal(snap.band.key, 'good');
+});
+
+/* ── Instalment plans hold credit, whether or not they have billed ─────── */
+
+test('an untracked instalment run is held against available credit before anything is billed', () => {
+  let { state, visa } = withCard();
+  // Nothing has been charged yet — the plan alone should already bite into
+  // the limit, the same way the bank's own app shows it the day it is agreed.
+  state = actions.addInstallment(state, {
+    accountId: visa.id, description: 'Aircon', monthlyAmount: 50_000, months: 6, startMonth: JAN,
+  });
+
+  const snap = cardSnapshot(state, creditAccount(state, 'Visa'), { month: JAN });
+  assert.equal(snap.balance, 0, 'nothing has reached the ledger yet');
+  assert.equal(snap.instalmentCommitted, 250_000, '5 months still to come, after this one');
+  assert.equal(snap.limitBalance, 250_000);
+  assert.equal(snap.availableCredit, 400_000 - 250_000);
+  assert.equal(committedBalance(state, visa.id, JAN), 250_000);
+});
+
+test('billed instalments are not double-counted against the limit', () => {
+  let { state, visa, groceries } = withCard();
+  state = actions.addInstallment(state, {
+    accountId: visa.id, description: 'Aircon', monthlyAmount: 50_000, months: 6, startMonth: JAN,
+  });
+  // This month's instalment has actually reached the ledger as a charge.
+  state = actions.addTransaction(state, {
+    date: `${JAN}-05`, accountId: visa.id, categoryId: groceries.id, amount: -50_000, kind: 'expense',
+  });
+
+  const snap = cardSnapshot(state, creditAccount(state, 'Visa'), { month: JAN });
+  assert.equal(snap.balance, 50_000, 'this month, billed');
+  assert.equal(snap.instalmentCommitted, 250_000, 'only the months still to come');
+  assert.equal(snap.limitBalance, 300_000, 'the two do not overlap');
+});
+
+test('a finished plan no longer holds anything against the limit', () => {
+  let { state, visa } = withCard();
+  state = actions.addInstallment(state, {
+    accountId: visa.id, description: 'Phone', monthlyAmount: 50_000, months: 3, startMonth: JAN,
+  });
+  const snap = cardSnapshot(state, creditAccount(state, 'Visa'), { month: addMonths(JAN, 6) });
+  assert.equal(snap.instalmentCommitted, 0);
+  assert.equal(snap.availableCredit, 400_000);
+});
+
+test('the portfolio total folds instalment commitments into utilisation without touching the real balance', () => {
+  let { state, visa, groceries } = withCard();
+  state = actions.addTransaction(state, {
+    date: `${JAN}-05`, accountId: visa.id, categoryId: groceries.id, amount: -50_000, kind: 'expense',
+  });
+  state = actions.addInstallment(state, {
+    accountId: visa.id, description: 'Laptop', monthlyAmount: 30_000, months: 5, startMonth: JAN,
+  });
+
+  const summary = debtSummary(state, { month: JAN });
+  assert.equal(summary.balance, 50_000, 'real money owed is unaffected');
+  assert.equal(summary.instalmentCommitted, 120_000, '4 months still to come');
+  assert.equal(summary.utilization, (50_000 + 120_000) / summary.limit);
 });
 
 test('card spending is fully funded by the budget, so coverage is complete', () => {

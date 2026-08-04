@@ -228,6 +228,17 @@ export interface Installment {
    * not 0% however it was sold, and the difference is what it costs.
    */
   principal: Cents | null;
+  /**
+   * How much of each monthly billing pays down the price, when the issuer
+   * breaks it out on the statement. Flat every month, the same way the billing
+   * itself is a fixed figure rather than a declining-balance schedule — a card
+   * instalment plan is sold as one number a month, not an amortisation table.
+   * Null when the split isn't known, which reads as every peso paying down
+   * the price — the same assumption a genuine 0% plan makes.
+   */
+  monthlyPrincipal?: Cents | null;
+  /** The interest portion of each monthly billing. Null alongside `monthlyPrincipal`. */
+  monthlyInterest?: Cents | null;
   note: string;
 }
 
@@ -584,6 +595,8 @@ export function makeInstallment(patch: Partial<Installment> = {}): Installment {
     months: 0,
     startMonth: '',
     principal: null,
+    monthlyPrincipal: null,
+    monthlyInterest: null,
     note: '',
     ...patch,
   };

@@ -36,9 +36,23 @@ export interface InstallmentSnapshot {
   progress: number;
   /**
    * What the plan adds over the purchase price, when the price is known. A
-   * genuinely 0% plan returns 0; anything else names its cost.
+   * genuinely 0% plan returns 0; anything else names its cost. Prefers the
+   * plan's own monthly split when it has one — that is the issuer's own
+   * figure, exact rather than inferred from the price.
    */
   interestCost: Cents | null;
+  /** The principal portion of each monthly billing — all of it, absent a split. */
+  monthlyPrincipal: Cents;
+  /** The interest portion of each monthly billing — none of it, absent a split. */
+  monthlyInterest: Cents;
+  /** Principal paid down by the instalments billed so far. */
+  billedPrincipal: Cents;
+  /** Interest paid so far. */
+  billedInterest: Cents;
+  /** Principal still to be paid down by what is left of the plan. */
+  remainingPrincipal: Cents;
+  /** Interest still to come. */
+  remainingInterest: Cents;
 }
 
 export interface InstallmentSummary {
@@ -69,6 +83,13 @@ export function installmentSnapshot(
   const billed = Math.min(months, Math.max(0, elapsed + 1));
   const remainingMonths = Math.max(0, months - billed);
 
+  // Absent a split, every peso of the billing is assumed to pay down the
+  // price — the same assumption a genuine 0% plan makes, and the only one
+  // that can be made without the issuer's own breakdown.
+  const hasSplit = plan.monthlyPrincipal != null || plan.monthlyInterest != null;
+  const monthlyInterest = Math.max(0, Math.round(plan.monthlyInterest ?? 0));
+  const monthlyPrincipal = Math.max(0, Math.round(plan.monthlyPrincipal ?? monthlyAmount - monthlyInterest));
+
   return {
     plan,
     billed,
@@ -80,7 +101,17 @@ export function installmentSnapshot(
     finished: months > 0 && billed >= months,
     activeThisMonth: elapsed >= 0 && elapsed < months,
     progress: months > 0 ? billed / months : 0,
-    interestCost: plan.principal == null ? null : Math.max(0, totalAmount - plan.principal),
+    interestCost: hasSplit
+      ? monthlyInterest * months
+      : plan.principal == null
+        ? null
+        : Math.max(0, totalAmount - plan.principal),
+    monthlyPrincipal,
+    monthlyInterest,
+    billedPrincipal: billed * monthlyPrincipal,
+    billedInterest: billed * monthlyInterest,
+    remainingPrincipal: remainingMonths * monthlyPrincipal,
+    remainingInterest: remainingMonths * monthlyInterest,
   };
 }
 
