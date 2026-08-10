@@ -9,15 +9,15 @@ import { icon } from './icons.ts';
 import { parseMoney, centsToInput, formatMoney } from '../core/money.ts';
 import { addMonths, currentMonth, formatDate, monthLabel, monthOf, todayISO } from '../core/dates.ts';
 import {
-  ACCOUNT_TYPES, BILL_CADENCES, CARD_ISSUERS, CATEGORY_COLORS, isCredit, isLoan, isWallet,
-  LOAN_KINDS, paymentCategoryFor, sameBank, SAVINGS_CREDIT_FREQUENCIES, sharedLimitFor,
-  sharedLimitMembers, WALLET_PROVIDERS,
+  ACCOUNT_TYPES, accountNameTaken, BILL_CADENCES, CARD_ISSUERS, CATEGORY_COLORS,
+  categoryNameTaken, isCredit, isLoan, isWallet, LOAN_KINDS, paymentCategoryFor, sameBank,
+  SAVINGS_CREDIT_FREQUENCIES, sharedLimitFor, sharedLimitMembers, WALLET_PROVIDERS,
 } from '../core/model.ts';
 import type {
   Account, AccountType, Bill, BillCadence, Category, Cents, CreditAccount, Installment, ISODate,
   MonthKey, SavingsCreditFrequency, SeriesColor, Transaction, TxKind,
 } from '../core/model.ts';
-import { billById, billSnapshot, linkableTransactions } from '../core/bills.ts';
+import { billById, billNameTaken, billSnapshot, linkableTransactions } from '../core/bills.ts';
 import { cardInstallments } from '../core/installments.ts';
 import { categoryRow, monthSummary } from '../core/budget.ts';
 import { cardSnapshot, type CardSnapshot } from '../core/cards.ts';
@@ -1221,6 +1221,12 @@ export function openAccountForm({ account = null, presetType }: AccountFormOptio
         mount(errorSlot, h('p.form-error', null, icon('alert', { size: 15 }), h('span', { text: 'Give the account a name.' })));
         return;
       }
+      if (accountNameTaken(getState(), name, { excludeId: account?.id })) {
+        mount(errorSlot, h('p.form-error', null, icon('alert', { size: 15 }), h('span', {
+          text: `An account named "${name}" already exists.`,
+        })));
+        return;
+      }
       const openingRaw = Math.abs(parseMoney(openingInput.value));
       const patch: AccountDraft = {
         name,
@@ -1404,6 +1410,12 @@ export function openCategoryForm({ category = null, onDone }: CategoryFormOption
       const name = nameInput.value.trim();
       if (!name) {
         mount(errorSlot, h('p.form-error', null, icon('alert', { size: 15 }), h('span', { text: 'Give the category a name.' })));
+        return;
+      }
+      if (categoryNameTaken(getState(), name, { excludeId: category?.id })) {
+        mount(errorSlot, h('p.form-error', null, icon('alert', { size: 15 }), h('span', {
+          text: `A category named "${name}" already exists.`,
+        })));
         return;
       }
       const patch = { name, group: groupInput.value.trim() || 'Everyday', color };
@@ -2011,6 +2023,12 @@ export function openBillForm({ bill = null, draft = {} }: BillFormOptions = {}):
       if (!name || !startDate) {
         mount(errorSlot, h('p.form-error', null, icon('alert', { size: 15 }), h('span', {
           text: 'A bill needs a name and a due date to count from.',
+        })));
+        return;
+      }
+      if (billNameTaken(getState(), name, { excludeId: existing?.id })) {
+        mount(errorSlot, h('p.form-error', null, icon('alert', { size: 15 }), h('span', {
+          text: `A bill named "${name}" already exists.`,
         })));
         return;
       }
