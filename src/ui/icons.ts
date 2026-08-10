@@ -41,6 +41,9 @@ const PATHS = {
   repeat: 'M4 9a5 5 0 0 1 5-5h11m0 0-3.5-3.5M20 4l-3.5 3.5M20 15a5 5 0 0 1-5 5H4m0 0 3.5 3.5M4 20l3.5-3.5',
   // A padlock: shown wherever a statement's password is being asked for or explained.
   lock: 'M6 11h12v9H6v-9Zm3 0V7a3 3 0 0 1 6 0v4',
+  // A storage box: put away, not thrown away — distinct from `trash`, which is
+  // shown only where an action actually removes the record.
+  archive: 'M3 4h18v4H3V4Zm1 4v11a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V8M9 12h6',
   // The brand mark: the same rising line as the app icon, minus the end dot,
   // which would go muddy at chrome sizes.
   zenith: 'M4 16.8 9.4 11.4 13.8 14.6 19.8 6.4',
