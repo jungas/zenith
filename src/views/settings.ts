@@ -12,7 +12,7 @@ import { seedState } from '../core/seed.ts';
 import { pendingReminders, reminderSettings } from '../core/reminders.ts';
 import * as actions from '../core/actions.ts';
 import {
-  clearAll, getState, moneyOpts, replaceState, updateSettings, commit,
+  clearAll, commit, getState, moneyOpts, replaceState, undo, updateSettings,
 } from '../store.ts';
 import { installState, promptInstall, applyUpdate, checkForUpdate } from '../pwa.ts';
 import {
@@ -348,13 +348,29 @@ export function settingsView(): HTMLElement {
               h('span.mini-meta', { text: category.group }),
               h('button.icon-btn', {
                 type: 'button',
-                'aria-label': `Archive ${category.name}`,
-                title: category.archived ? 'Restore' : 'Archive',
+                'aria-label': `${category.archived ? 'Restore' : 'Archive'} ${category.name}`,
+                title: category.archived ? 'Restore — bring it back into the budget' : 'Archive — hide it, keep its history',
                 onclick: () =>
                   commit((s) => actions.updateCategory(s, category.id, { archived: !category.archived }), {
                     label: 'archive category',
                   }),
-              }, icon(category.archived ? 'undo' : 'trash', { size: 15 })),
+              }, icon(category.archived ? 'undo' : 'archive', { size: 15 })),
+              h('button.icon-btn.icon-btn-danger', {
+                type: 'button',
+                'aria-label': `Delete ${category.name}`,
+                title: 'Delete permanently',
+                onclick: async () => {
+                  const ok = await confirmDialog({
+                    title: `Delete ${category.name}?`,
+                    message: 'Transactions keep their history but become uncategorised. This cannot be undone from another device.',
+                    confirmLabel: 'Delete',
+                    danger: true,
+                  });
+                  if (!ok) return;
+                  commit((s) => actions.deleteCategory(s, category.id), { label: 'delete category' });
+                  toast('Category deleted.', { tone: 'success', action: { label: 'Undo', onClick: () => undo() } });
+                },
+              }, icon('trash', { size: 15 })),
             ),
           ),
       ),

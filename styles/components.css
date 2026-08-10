@@ -94,6 +94,11 @@
   background: var(--accent-wash);
 }
 
+.icon-btn-danger:hover {
+  background: color-mix(in srgb, var(--status-critical) 10%, transparent);
+  color: var(--danger-text);
+}
+
 .button-row {
   display: flex;
   flex-wrap: wrap;
