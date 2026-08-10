@@ -21,8 +21,8 @@ import { emptyState, makeBill } from '../src/core/model.ts';
 import type { AppState, Bill } from '../src/core/model.ts';
 import * as actions from '../src/core/actions.ts';
 import {
-  billFunding, billSnapshot, billTotals, forecastAmount, linkableTransactions, occurrencesBetween,
-  occurrencesInMonth, suggestedBills, upcomingBills,
+  billFunding, billNameTaken, billSnapshot, billTotals, forecastAmount, linkableTransactions,
+  occurrencesBetween, occurrencesInMonth, suggestedBills, upcomingBills,
 } from '../src/core/bills.ts';
 import { accountBalance, cashOnHand, categoryRow, monthSummary, readyToAssign } from '../src/core/budget.ts';
 import { dueReminders, plannedReminders } from '../src/core/reminders.ts';
@@ -131,6 +131,15 @@ test('a bill needs an anchor date, or it has no schedule to be', () => {
   const before = emptyState(new Date('2026-05-01T00:00:00Z'));
   const after = actions.addBill(before, { name: 'Rent', amount: 1000 });
   assert.equal(after, before, 'a bill with no due date is refused rather than stored empty');
+});
+
+test('a name already tracked is flagged, case and spacing aside, but not against itself', () => {
+  const { state } = fixture();
+  const rent = state.bills?.find((b) => b.name === 'Rent');
+  assert.equal(billNameTaken(state, 'Rent'), true);
+  assert.equal(billNameTaken(state, ' rent '), true, 'case and spacing are ignored');
+  assert.equal(billNameTaken(state, 'Internet'), false);
+  assert.equal(billNameTaken(state, 'Rent', { excludeId: rent?.id }), false, 'editing does not collide with itself');
 });
 
 /* ── "Paid" is read back out of the ledger ────────────────────────────── */

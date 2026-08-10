@@ -587,6 +587,22 @@ export function makeAccount(patch: AccountDraft = {}): Account {
   return asset;
 }
 
+/**
+ * Is an account already using this name?
+ *
+ * Checked across every type together, archived included: an account is
+ * chosen by name in transfers, transaction rows and reports alike, so a
+ * chequing account and a card sharing a name would be ambiguous everywhere
+ * that picker appears, not just in the accounts list.
+ */
+export function accountNameTaken(
+  state: AppState,
+  name: string,
+  { excludeId }: { excludeId?: string } = {},
+): boolean {
+  return state.accounts.some((a) => a.id !== excludeId && sameName(a.name, name));
+}
+
 export function makeSharedLimit(patch: Partial<SharedLimit> = {}): SharedLimit {
   return {
     id: newId('slim'),
@@ -757,9 +773,12 @@ export function sharedLimitSiblings(state: AppState, card: CreditAccount): Credi
   return sharedLimitMembers(state, card.sharedLimitId).filter((other) => other.id !== card.id);
 }
 
-/** Bank names compare case- and spacing-insensitively: "BPI " is "bpi". */
-export const sameBank = (a: string | undefined, b: string | undefined): boolean =>
+/** Names compare case- and spacing-insensitively: "Groceries " is "groceries". */
+export const sameName = (a: string | undefined, b: string | undefined): boolean =>
   (a ?? '').trim().toLowerCase() === (b ?? '').trim().toLowerCase();
+
+/** Bank names are names too: "BPI " is "bpi". */
+export const sameBank = sameName;
 
 /**
  * May this card join that shared limit?
@@ -795,6 +814,25 @@ export function effectiveCreditLimit(state: AppState, card: CreditAccount): Cent
 
 export function categoriesById(state: AppState): Map<string, Category> {
   return new Map(state.categories.map((c) => [c.id, c]));
+}
+
+/**
+ * Is a spending category already using this name?
+ *
+ * Only `spending` categories are checked — a `ccPayment` envelope is named
+ * after its card automatically and is never offered as a name someone could
+ * collide with. Archived categories still count: they are hidden, not gone,
+ * and unarchiving one that quietly duplicates a live envelope would make the
+ * two indistinguishable in every list that shows them by name alone.
+ */
+export function categoryNameTaken(
+  state: AppState,
+  name: string,
+  { excludeId }: { excludeId?: string } = {},
+): boolean {
+  return state.categories.some(
+    (c) => c.kind === 'spending' && c.id !== excludeId && sameName(c.name, name),
+  );
 }
 
 /** Categories grouped for display, archived ones dropped by default. */

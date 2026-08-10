@@ -28,7 +28,7 @@ import { categoryRow, monthSummary } from './budget.ts';
 import {
   addDays, addMonthsToDate, currentMonth, daysBetween, daysInMonth, monthOf, todayISO,
 } from './dates.ts';
-import { BILL_CADENCES } from './model.ts';
+import { BILL_CADENCES, sameName } from './model.ts';
 import type {
   Account, AppState, Bill, Category, Cents, ISODate, MonthKey, Transaction,
 } from './model.ts';
@@ -172,6 +172,21 @@ export function billPayments(state: AppState): PaymentIndex {
 
 export const billById = (state: AppState, billId: string | null | undefined): Bill | null =>
   (billId && (state.bills ?? []).find((bill) => bill.id === billId)) || null;
+
+/**
+ * Is another bill already tracked under this name?
+ *
+ * Archived bills still count — they stay in the same list a moment away from
+ * being unarchived, and "Electricity" twice is exactly the confusion a
+ * duplicate check exists to head off.
+ */
+export function billNameTaken(
+  state: AppState,
+  name: string,
+  { excludeId }: { excludeId?: string } = {},
+): boolean {
+  return (state.bills ?? []).some((b) => b.id !== excludeId && sameName(b.name, name));
+}
 
 export function activeBills(
   state: AppState,
