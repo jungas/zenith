@@ -3,13 +3,20 @@
  *
  * Strategy:
  *   · app shell (HTML, CSS, JS, icons) — cache-first, precached on install, so
- *     the app opens instantly and works with no network at all
+ *     the app opens instantly even with no network
  *   · navigations — network-first with a cache fallback to index.html, so an
  *     offline launch still boots the shell
+ *   · `/api/*` — never intercepted; always goes straight to the network,
+ *     untouched by this worker
  *   · everything else same-origin — stale-while-revalidate
  *
- * There is no network dependency for data: the budget lives in localStorage, so
- * "offline" is the normal case rather than a degraded one.
+ * The shell (this file, the JS/CSS/icons) still works with no network at all —
+ * that part is genuinely offline-first. The *budget data* is not: it lives on
+ * Zenith's own server now, not localStorage, so the shell can boot offline but
+ * `src/store.ts` will fail to load and show a "could not reach the server"
+ * screen until connectivity comes back. Caching `/api/*` here would make that
+ * failure silent instead — a stale budget served as if it were current — which
+ * is worse than an honest error.
  *
  * It also delivers reminders while the app is closed — see the reminders
  * section below.
@@ -150,6 +157,9 @@ sw.addEventListener('fetch', (event: FetchEvent) => {
 
   const url = new URL(request.url);
   if (url.origin !== sw.location.origin) return;
+  // Data, not shell — always fresh from the server, never cached or served
+  // from cache. See the file-level comment above.
+  if (url.pathname.startsWith('/api/')) return;
 
   if (request.mode === 'navigate') {
     event.respondWith(handleNavigation(request));

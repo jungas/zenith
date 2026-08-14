@@ -8,6 +8,6 @@
     "noEmit": true,
     "sourceMap": false
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "tools/**/*.ts"],
+  "include": ["src/**/*.ts", "tests/**/*.ts", "tools/**/*.ts", "server/**/*.ts"],
   "exclude": []
 }

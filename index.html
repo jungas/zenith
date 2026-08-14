@@ -6,7 +6,7 @@
     <title>Zenith · Budget &amp; cards</title>
     <meta
       name="description"
-      content="Offline-first envelope budgeting with credit card management wired straight into the budget."
+      content="Envelope budgeting with credit card management wired straight into the budget."
     />
     <meta name="theme-color" content="#f9f9f7" />
     <meta name="color-scheme" content="light dark" />
@@ -40,8 +40,40 @@
     </noscript>
 
     <script type="module">
+      // This file is served two ways: as-is (a static host — GitHub Pages,
+      // `file://`, any plain web server) or through Zenith's own server
+      // (`server/index.ts`), which injects a `window.__ZENITH_BACKEND__ =
+      // 'server'` script into the <head> before sending it. `store.ts` reads
+      // that flag: present, it loads from and saves to this server's own
+      // `/api/state`; absent — the case right here in the checked-in file —
+      // it falls back to localStorage, which is what makes a plain static
+      // deploy or a double-clicked `file://index.html` work with no server
+      // at all.
+      import { init } from './dist/store.js';
       import { start } from './dist/app.js';
-      start();
+
+      init()
+        .then(start)
+        .catch((error) => {
+          console.error('Zenith could not load its data', error);
+          const app = document.getElementById('app');
+          app.innerHTML = `
+            <div class="view">
+              <div class="callout callout-critical">
+                <div class="callout-body">
+                  <h3 class="callout-title">Could not reach Zenith's server</h3>
+                  <p class="callout-text" data-error-detail></p>
+                  <p class="callout-text">Check that the server is running, then reload.</p>
+                </div>
+              </div>
+              <button type="button" class="btn" onclick="location.reload()">Reload</button>
+            </div>`;
+          // Set as text, not interpolated into the markup above — the error
+          // message can echo back whatever the server (or a network layer in
+          // between) sent, and it must never be parsed as HTML.
+          app.querySelector('[data-error-detail]').textContent =
+            error instanceof Error ? error.message : 'Unknown error';
+        });
     </script>
   </body>
 </html>

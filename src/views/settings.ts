@@ -12,7 +12,7 @@ import { seedState } from '../core/seed.ts';
 import { pendingReminders, reminderSettings } from '../core/reminders.ts';
 import * as actions from '../core/actions.ts';
 import {
-  clearAll, commit, getState, moneyOpts, replaceState, undo, updateSettings,
+  backend, clearAll, commit, getState, moneyOpts, replaceState, undo, updateSettings,
 } from '../store.ts';
 import { installState, promptInstall, applyUpdate, checkForUpdate } from '../pwa.ts';
 import {
@@ -53,7 +53,12 @@ export function settingsView(): HTMLElement {
   const money = moneyOpts(state);
   const root = h('div.view.view-settings');
 
-  append(root, sectionHeader('Settings', { subtitle: 'Everything is stored on this device only' }));
+  append(
+    root,
+    sectionHeader('Settings', {
+      subtitle: backend() === 'server' ? 'Synced to your Zenith server' : 'Everything is stored on this device only',
+    }),
+  );
 
   /* Preferences. */
   append(
@@ -199,7 +204,7 @@ export function settingsView(): HTMLElement {
         const next = actions.fromBackup(text);
         const ok = await confirmDialog({
           title: 'Replace your data?',
-          message: `This backup has ${next.accounts.length} accounts and ${next.transactions.length} transactions. It will replace what is on this device.`,
+          message: `This backup has ${next.accounts.length} accounts and ${next.transactions.length} transactions. It will replace what is ${backend() === 'server' ? 'saved on the server' : 'on this device'}.`,
           confirmLabel: 'Import',
           danger: true,
         });
@@ -222,7 +227,10 @@ export function settingsView(): HTMLElement {
       null,
       h('h3.card-title', { text: 'Your data' }),
       h('p.card-text', {
-        text: 'Zenith keeps everything in this browser — nothing is uploaded. Export regularly so a cleared browser does not take your budget with it.',
+        text:
+          backend() === 'server'
+            ? 'Zenith saves everything to its own server as you go. Export a backup occasionally in case something happens to the server or its storage.'
+            : 'Zenith keeps everything in this browser — nothing is uploaded. Export regularly so a cleared browser does not take your budget with it.',
       }),
       h(
         'div.button-row',
@@ -276,7 +284,7 @@ export function settingsView(): HTMLElement {
             onclick: async () => {
               const ok = await confirmDialog({
                 title: 'Delete everything?',
-                message: 'Every account, category and transaction on this device will be removed. Export a backup first if you might want it back.',
+                message: `Every account, category and transaction ${backend() === 'server' ? 'on the server' : 'on this device'} will be removed. Export a backup first if you might want it back.`,
                 confirmLabel: 'Delete everything',
                 danger: true,
               });
@@ -395,10 +403,10 @@ export function settingsView(): HTMLElement {
       null,
       h('h3.card-title', { text: 'About Zenith' }),
       h('p.card-text', {
-        text: 'An offline-first envelope budget where credit cards are first-class: spending on a card funds its payment envelope, so the statement is always covered by a plan rather than a surprise.',
+        text: 'An envelope budget where credit cards are first-class: spending on a card funds its payment envelope, so the statement is always covered by a plan rather than a surprise.',
       }),
       h('dl.about-list', null,
-        aboutRow('Storage', 'This browser only (localStorage)'),
+        aboutRow('Storage', backend() === 'server' ? 'Synced to this server' : 'This browser only (localStorage)'),
         aboutRow('Accounts', String(state.accounts.length)),
         aboutRow('Transactions', String(state.transactions.length)),
         aboutRow('Utilisation warning', formatPercent(state.settings.utilizationWarn ?? 0.3)),

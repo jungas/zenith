@@ -1,0 +1,11 @@
+node_modules
+dist
+dist-artifact
+.artifact-build
+sw.js
+data
+.git
+.github
+tests
+openspec
+.claude
