@@ -1,13 +1,13 @@
 {
   "name": "zenith",
   "version": "1.0.0",
-  "description": "Zenith \u2014 an offline-first PWA for envelope budgeting with credit-card management wired into the budget.",
+  "description": "Zenith \u2014 an installable PWA for envelope budgeting with credit-card management wired into the budget, self-hosted against its own server.",
   "type": "module",
   "private": true,
   "scripts": {
     "build": "tsc -p tsconfig.json && tsc -p tsconfig.sw.json && node tools/stamp-sw.ts",
-    "start": "npm run build && node tools/serve.ts",
-    "dev": "node tools/serve.ts",
+    "start": "npm run build && node server/index.ts",
+    "dev": "node server/index.ts",
     "typecheck": "tsc -p tsconfig.check.json",
     "test": "npm run typecheck && node --test \"tests/**/*.test.ts\"",
     "test:only": "node --test \"tests/**/*.test.ts\"",
@@ -16,14 +16,14 @@
     "build:artifact": "node tools/build-artifact.ts"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.5.0"
   },
   "keywords": [
     "pwa",
     "budget",
     "envelope-budgeting",
     "credit-cards",
-    "offline-first"
+    "self-hosted"
   ],
   "license": "MIT",
   "devDependencies": {

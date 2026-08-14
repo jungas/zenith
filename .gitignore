@@ -8,3 +8,7 @@ dist/
 dist-artifact/
 .artifact-build/
 /sw.js
+
+# Server data: the SQLite budget store (see server/db.ts). Never commit this —
+# it's the live database, not a fixture.
+/data/

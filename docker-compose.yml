@@ -1,0 +1,22 @@
+services:
+  zenith:
+    build: .
+    image: zenith:latest
+    container_name: zenith
+    restart: unless-stopped
+    # Loopback-only: nothing on the LAN or the internet can reach this port
+    # directly. cloudflared (running on the host, not in this compose file)
+    # can still reach it via 127.0.0.1 — see README § Self-hosting for how to
+    # point a tunnel hostname at it, and read the warning there first: this
+    # app ships with no login screen, so anything you point at it is public.
+    ports:
+      - "127.0.0.1:8091:4173"
+    volumes:
+      - zenith-data:/app/data
+    environment:
+      - HOST=0.0.0.0
+      - PORT=4173
+      - DATA_DIR=/app/data
+
+volumes:
+  zenith-data:

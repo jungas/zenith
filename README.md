@@ -1,20 +1,23 @@
 # Zenith
 
-An installable, offline-first **envelope budgeting** PWA where **credit cards are
-part of the budget** rather than a separate ledger you reconcile by hand.
+An installable **envelope budgeting** PWA where **credit cards are part of the
+budget** rather than a separate ledger you reconcile by hand — self-hosted
+against its own server, so your budget lives on a machine you control rather
+than in one browser's storage.
 
-Written in **TypeScript** under `strict`, with **no runtime dependencies** — no
-framework, no bundler, no chart library. TypeScript is the only build-time
-dependency.
+Written in **TypeScript** under `strict`, with **no runtime dependencies** —
+not in the browser, not on the server. No framework, no bundler, no chart
+library, no database driver: TypeScript is the only build-time dependency, and
+the server runs straight from source under Node's own type stripping.
 
 ```bash
 npm install
-npm start         # builds, then serves http://localhost:4173
-npm test          # type-checks, then runs 221 tests
+npm start         # builds, then serves http://localhost:4173 (see § Self-hosting)
+npm test          # type-checks, then runs 272 tests
 npm run typecheck # types only
 npm run build     # dist/*.js + sw.js, stamped with a shell version
 npm run icons     # regenerate the app icons
-npm run build:artifact   # the whole app as one HTML file
+npm run build:artifact   # the whole app as one localStorage-only HTML file
 ```
 
 Open Settings → **Load sample data** for a worked example: four months of
@@ -680,7 +683,7 @@ styles/               tokens · base · components · views · glass (loaded las
 src/
   app.ts              chrome, nav, theme, render loop
   router.ts           hash routing (works from file:// too)
-  store.ts            single state object, localStorage, pub/sub, undo stack
+  store.ts            single state object, server or localStorage, pub/sub, undo stack
   pwa.ts              SW registration, install & update prompts, online state
   reminders.ts        permission, delivery, and the schedule handed to the SW
   sw.ts               service worker → compiled to ./sw.js at the repo root
@@ -702,9 +705,15 @@ src/
                       filters, fonts, text extraction (see § Importing a statement)
   ui/                 dom · icons · charts · components · modal · toast · forms · password
   views/              one module per screen
-tools/                static dev server · PNG icon generator
-tests/                node:test — engine, cards, charts, reminders, PWA wiring
+server/               the app's own server — static files + /api/state (§ Self-hosting)
+  index.ts             entry point: one HTTP server, static files + API, no deps
+  api.ts                GET/PUT /api/state, optimistic concurrency
+  db.ts                 SQLite storage: current state + insert-only history
+  static.ts             static file serving, lifted from the old dev server
+tools/                icon generator · SW version stamping · single-file build
+tests/                node:test — engine, cards, charts, reminders, PWA wiring, server storage
 dist/                 build output (git-ignored)
+data/                  SQLite database (git-ignored; see § Self-hosting)
 ```
 
 **`core/` is pure and DOM-free**, which is why the money maths is directly
@@ -764,13 +773,17 @@ shipped with:
 
 - **No runtime dependencies.** A budget you rely on should not stop working
   because a toolchain rotted, so nothing ships to the browser but this repo's own
-  code. The tradeoff is a hand-rolled hyperscript layer and hand-rolled SVG
-  charts. TypeScript is a build-time dependency only.
+  code — and the server (`server/`) is the same story: no framework, no ORM, no
+  driver. `node:sqlite` and `node:http` are Node itself. The tradeoff on the
+  client is a hand-rolled hyperscript layer and hand-rolled SVG charts.
+  TypeScript is a build-time dependency only, everywhere.
 - **Integer cents everywhere.** Floats never touch a balance; rate maths rounds
   back to cents immediately.
-- **localStorage, not IndexedDB.** The whole budget is a few hundred KB of JSON,
-  so reads are synchronous and rendering never awaits. Export is one
-  `JSON.stringify`.
+- **One JSON blob, client and server alike.** The whole budget is a few hundred
+  KB of JSON; `src/store.ts` still holds it as one object and hands it to
+  whichever backend this build is wired for (`server/db.ts`'s SQLite, or
+  `localStorage` for the single-file build) rather than the client and server
+  disagreeing about shape. Export is still one `JSON.stringify`.
 - **`u` undo instead of confirmation dialogs** for reversible actions;
   confirmation is reserved for genuinely destructive ones.
 - **Test fixtures fail loudly.** Lookups go through a `must()` helper rather than
@@ -784,12 +797,21 @@ shipped with:
 
 ### Data & privacy
 
-Everything stays in your browser. A statement you import is read on the device
-and its password is never stored. There is no account, no sync and no network
-call — the service worker only ever caches Zenith's own files, and reminders are
-worked out on the device rather than pushed to it. Because that means
-a cleared browser takes the budget with it, Settings has a one-click JSON backup,
-and the app says so plainly rather than burying it.
+The budget lives on the server you run (§ Self-hosting) — nowhere else. There
+is no third-party account, no analytics, and no telemetry: the only network
+call the client ever makes for data is to `/api/state` on that same server. A
+statement you import is read in the browser and its password is never stored;
+only the transactions it produces leave the device, in the same save as
+everything else. Reminders are still worked out on the device rather than
+pushed to it, and the service worker still only ever caches Zenith's own
+files.
+
+**Zenith ships with no login of its own.** Anyone who can reach the server's
+address can read and edit the budget — see § Self-hosting for what that means
+once a tunnel or reverse proxy puts it on the internet, and how to put
+something in front of it. Settings still has a one-click JSON backup either
+way, both because a server has its own failure modes and because it is the
+only way data gets *off* Zenith.
 
 ---
 
@@ -900,17 +922,26 @@ where a host sandboxes storage.
 
 ## Deploying
 
-The app is static once built:
+This section is about `deploy.yml` — the GitHub Pages build, which is a
+**static, localStorage-only preview**: a good way to try the app or share a
+link, but every visitor gets their own browser's copy of the budget, with
+nobody's edits reaching anybody else. For the real thing — one budget, synced
+to a server you run — see **§ Self-hosting** below instead.
+
+The static build:
 
 ```bash
 npm ci && npm run build   # emits dist/ and sw.js
 ```
 
 Then serve `index.html`, `manifest.webmanifest`, `sw.js`, `dist/`, `styles/` and
-`assets/`. Every reference is relative, so a project subpath
-(`you.github.io/zenith/`) works with no configuration: the worker scopes itself
-to that directory rather than the domain root. `sw.js` has to sit beside
-`index.html` — a worker only controls its own directory and below.
+`assets/` from any static host. Every reference is relative, so a project
+subpath (`you.github.io/zenith/`) works with no configuration: the worker
+scopes itself to that directory rather than the domain root. `sw.js` has to sit
+beside `index.html` — a worker only controls its own directory and below.
+`index.html` itself is backend-neutral (see § Self-hosting for what that
+means), so this deployment falls back to `localStorage` automatically, with no
+server involved anywhere.
 
 Two workflows, kept separate so publishing the live site is never a side effect
 of opening a pull request:
@@ -980,6 +1011,103 @@ two things a lone HTML file cannot have:
 
 Add-to-Home-Screen on such a page gives a bookmark, not an installed app, and it
 still needs the network to open. Host the built app for the real thing.
+
+## Self-hosting
+
+Zenith's server (`server/`) is one Node process: it serves the same static
+files as § Deploying, plus `GET`/`PUT /api/state` backed by SQLite
+(`server/db.ts`). Nothing about `src/core/` changed to get there — the server
+still stores and hands back one JSON blob, the same shape `localStorage` held,
+just with crash-safe writes and durability `localStorage` never had. No
+framework, no ORM, no database driver — `node:http` and `node:sqlite` are
+Node's own, so the runtime image below needs no `node_modules` at all.
+
+### Running it directly
+
+```bash
+npm ci && npm start   # builds, then listens on http://localhost:4173
+```
+
+The database lands at `./data/zenith.db` (override with `DATA_DIR`). Three
+environment variables, all optional:
+
+| Variable | Default | |
+|---|---|---|
+| `PORT` | `4173` | |
+| `HOST` | `127.0.0.1` | set `0.0.0.0` to accept connections from outside the host — Docker below does this for you |
+| `DATA_DIR` | `./data` | where `zenith.db` (and its `-wal`/`-shm` files) live |
+
+### Docker
+
+```bash
+docker compose up -d --build
+```
+
+The image is a two-stage build: TypeScript compiles in a throwaway stage that
+has `npm ci`'d, and the runtime stage copies only `dist/`, `sw.js`, the static
+files and `server/` — no `node_modules`, no TypeScript, nothing but Node and
+this repo's own code. `docker-compose.yml` publishes the app on
+`127.0.0.1:8091` and keeps the database in a named volume (`zenith-data`) so
+`docker compose up --build` to pick up a new version never touches it.
+
+**That `127.0.0.1` in the port mapping is deliberate, and matters more than
+the rest of this section.** Zenith ships with no login screen — anything that
+can reach the port can read and edit the whole budget. Binding to loopback
+means only the Pi itself can reach it, which is exactly right until you have
+decided how you want to gate access; widening it to `0.0.0.0:8091:4173` (or
+pointing a tunnel at it — next) hands that same access to whatever network can
+reach the port.
+
+### Putting it on a tunnel
+
+A Pi running `cloudflared` already can add Zenith as another hostname without
+touching the tunnel's systemd service: Cloudflare Zero Trust dashboard →
+**Networks → Tunnels** → the running tunnel → **Public Hostname** → add one
+pointing at `http://localhost:8091` (the port `docker-compose.yml` publishes).
+No config file edit and no restart — the running `cloudflared` process picks
+up ingress changes from the dashboard on its own.
+
+Before that hostname goes anywhere you'd mind someone else finding: this app
+has no login of its own, so a bare tunnel hostname is a public URL. **Cloudflare
+Access** (Zero Trust → **Access → Applications**) puts a login page — email
+one-time code, Google, GitHub, whatever your identity provider is — in front
+of the hostname before any request reaches the tunnel at all, for free at this
+scale, with no code changes to Zenith. Turn it on for the hostname *before*
+telling anyone the URL, not after.
+
+### Backups
+
+Settings → **Export backup (JSON)** still works exactly as before and is still
+the one truly portable copy — the format doesn't care what wrote it. Beyond
+that, the database is a single file:
+
+```bash
+# while the container is running — SQLite's own online backup, safe to run live
+docker compose exec zenith sqlite3 /app/data/zenith.db ".backup '/app/data/backup.db'"
+docker compose cp zenith:/app/data/backup.db ./zenith-backup-$(date +%F).db
+```
+
+`server/db.ts` also keeps the last 200 saves in an insert-only
+`app_state_history` table alongside the current one — a recovery path if a bad
+write ever needs undoing after the session (and its 25-entry in-memory undo
+stack) is long gone:
+
+```bash
+docker compose exec zenith sqlite3 /app/data/zenith.db \
+  "SELECT version, updated_at FROM app_state_history ORDER BY id DESC LIMIT 5;"
+```
+
+### What "server required" means day to day
+
+There is deliberately no offline queue (see `src/store.ts`'s file header): if
+the app can't reach `/api/state` when it loads, it shows an error screen
+instead of a stale or empty budget pretending to be current; if a save fails
+mid-session, edits stay visible in the tab but are flagged unsaved (a
+"Retrying…" toast, and a confirmation prompt before you'd close the tab on top
+of them) until the connection comes back. Opening the same budget in two
+places at once is fine — the second save after a conflicting one is rejected
+with a "reload to see the latest" toast rather than silently overwriting the
+first.
 
 ## Browser support
 
